@@ -9,12 +9,21 @@ const FONT_SCALES = {small: 0.9, medium: 1, large: 1.2};
 const DEFAULT_SETTINGS = {fee: 50, fontSize: 'medium', highContrast: false, cycleMode: 'personal', lang: 'ar', lastSeenMonth: '', hourSlots: {sat_tue: [], sun_wed: [], mon_thu: []}, grades: [], teacherPassword: ''};
 
 
+function onSearchInput(el){
+  // redrawing replaces the input, so put the cursor back where it was or typing would stop after one letter
+  const pos = el.selectionStart;
+  state.search = el.value;
+  render();
+  const n = document.querySelector('.att-search input');
+  if(n){ n.focus(); try{ n.setSelectionRange(pos, pos); }catch(e){} }
+}
 function applyBootstrapDirection(){
-  // Bootstrap ships separate right-to-left and left-to-right stylesheets: enable the one that matches the language.
+  // Both Bootstrap files are loaded; the matching one is switched on through `media`
+  // (re-enabling a disabled stylesheet is unreliable in Chrome).
   const rtl = (state.settings && state.settings.lang === 'en') ? false : true;
   const r = document.getElementById('bs-rtl'), l = document.getElementById('bs-ltr');
-  if(r) r.disabled = !rtl;
-  if(l) l.disabled = rtl;
+  if(r) r.media = rtl ? 'all' : 'not all';
+  if(l) l.media = rtl ? 'not all' : 'all';
 }
 
 function lang(){ return state.settings.lang === 'en' ? 'en' : 'ar'; }
@@ -41,7 +50,8 @@ let state = {
   members: [], attendance: {}, payments: {},
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
-  welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
+  license: null, licenseMsg: '', licenseOk: false, adminSecret: null,
+  adm: {plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
   adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, amountDrafts: {},
@@ -51,7 +61,7 @@ let state = {
 
 const SUPABASE_URL = 'https://kcarkkmuludbmdlakkxd.supabase.co/rest/v1';
 const SUPABASE_KEY = 'sb_publishable_LnDpH8NgNADbQ8dzLW4NlA_SkpPFoSC';
-const DB_TABLE = 'app_data';
+const DB_TABLE = 'sejjel_data';
 function dbHeaders(extra){
   return Object.assign({'apikey': SUPABASE_KEY, 'Authorization': 'Bearer '+SUPABASE_KEY}, extra||{});
 }
@@ -66,14 +76,86 @@ async function fetchByCode(code){
   const rows = await res.json();
   return (rows && rows[0] && rows[0].payload) || null;
 }
-async function pushByCode(code, payload){
-  const res = await fetch(SUPABASE_URL+'/'+DB_TABLE, {
-    method: 'POST',
-    headers: dbHeaders({'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=minimal'}),
-    body: JSON.stringify({id: code, payload: payload})
+async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
+// ---- Licensing (trial + activation codes) ----
+// Fill in your prices (EGP) here; leave null to hide a price.
+const PAY = {
+  card: '5078086720588263',
+  instapay: '01277235553',
+  whatsapp: '201223425616',            // 01223425616 in international form, for the wa.me link
+  whatsappDisplay: '01223425616',
+  prices: {monthly: null, yearly: null, lifetime: null}
+};
+async function rpc(name, args){
+  const res = await fetch(SUPABASE_URL+'/rpc/'+name, {
+    method: 'POST', headers: dbHeaders({'Content-Type':'application/json'}), body: JSON.stringify(args)
   });
-  if(!res.ok) throw new Error('push failed: '+res.status);
+  if(!res.ok){
+    let msg = ''; try{ const j = await res.json(); msg = (j && j.message) || ''; }catch(e){}
+    const err = new Error(msg || ('rpc failed: '+res.status)); err.code = msg; throw err;
+  }
+  const txt = await res.text(); return txt ? JSON.parse(txt) : null;
 }
+function normPhone(s){
+  let d = String(s||'').replace(/[٠-٩]/g, function(c){ return '٠١٢٣٤٥٦٧٨٩'.indexOf(c); }).replace(/\D/g,'');
+  if(d.indexOf('0020')===0) d = d.slice(2);
+  if(d.indexOf('20')===0 && d.length===12) d = '0'+d.slice(2);
+  return d;
+}
+function saveLicense(){ saveLocal('license', state.license ? {code: state.teacherCode, s: state.license} : null); }
+async function refreshLicense(){
+  if(!state.teacherCode){ state.license = null; return; }
+  try {
+    state.license = await rpc('account_status', {p_id: state.teacherCode});
+    saveLicense();
+  } catch(e){
+    // offline: fall back to the last answer we got from the server
+    const c = loadLocal('license', null);
+    state.license = (c && c.code === state.teacherCode && c.s) ? c.s : {state: 'unknown'};
+    if(state.license.until && new Date(state.license.until).getTime() <= Date.now()) state.license = {state: 'expired'};
+  }
+}
+function isExpired(){ return !!(state.license && state.license.state === 'expired'); }
+function licenseDaysLeft(){
+  const l = state.license;
+  if(!l || !l.until) return null;
+  return Math.max(0, Math.ceil((new Date(l.until).getTime() - Date.now()) / 86400000));
+}
+function onResume(){
+  if(!state.teacherCode) return;
+  const before = JSON.stringify(state.license);
+  refreshLicense().then(function(){
+    trySyncPending();
+    if(JSON.stringify(state.license) !== before) render();
+  });
+}
+async function redeemCode(raw){
+  const code = (raw||'').trim();
+  state.licenseOk = false;
+  if(!code){ state.licenseMsg = t('enterActivation'); render(); return; }
+  try {
+    state.license = await rpc('redeem_code', {p_id: state.teacherCode, p_code: code});
+    saveLicense();
+    state.licenseMsg = t('activatedOk'); state.licenseOk = true;
+    trySyncPending();
+  } catch(e){
+    state.licenseMsg = e.code === 'code_invalid' ? t('codeInvalid') : e.code === 'code_used' ? t('codeUsed') : t('activateFail');
+  }
+  render();
+}
+function copyText(s, btn){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(s).then(function(){ if(btn) btn.textContent = t('payCopied'); }).catch(function(){});
+  }
+}
+function waLink(){
+  return 'https://wa.me/'+PAY.whatsapp+'?text='+encodeURIComponent(t('waText')(state.teacherCode||''));
+}
+function submitSignup(){
+  const v = function(id){ return document.getElementById(id).value; };
+  createNewCode(v('newPasswordInput'), v('newPasswordConfirmInput'), v('newEmailInput'), v('newPhoneInput'));
+}
+
 function cloudConfig(){
   return {fee: state.settings.fee, cycleMode: state.settings.cycleMode, hourSlots: state.settings.hourSlots, grades: state.settings.grades, teacherPassword: state.settings.teacherPassword};
 }
@@ -90,9 +172,10 @@ function pushNow(){
     markSyncPending(false);
     state.syncStatus = t('syncSuccess');
     render();
-  }).catch(function(){
+  }).catch(function(e){
     markSyncPending(true);
-    state.syncStatus = t('offlineSaved');
+    if(e && e.code === 'subscription_expired'){ state.license = {state: 'expired'}; saveLicense(); state.syncStatus = t('readOnlySync'); }
+    else state.syncStatus = t('offlineSaved');
     render();
   });
 }
@@ -143,6 +226,7 @@ async function initLoad(){
   state.teacherCode = loadLocal('teacherCode', null);
   state.role = loadLocal('role', 'teacher');
   state.pendingSync = loadLocal('pendingSync', false);
+  if(state.teacherCode) await refreshLicense();
 
   if(state.teacherCode){
     state.members = loadLocal('members', []);
@@ -183,34 +267,46 @@ async function initLoad(){
   }
   state.ready = true;
   render();
-  window.addEventListener('online', trySyncPending);
-  document.addEventListener('visibilitychange', function(){ if(!document.hidden) trySyncPending(); });
+  window.addEventListener('online', onResume);
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) onResume(); });
 }
 
-async function createNewCode(password, confirm){
+async function createNewCode(password, confirm, email, phone){
   password = (password||'').trim();
-  if(!password){ state.authError = t('fillAllFields'); render(); return; }
+  email = (email||'').trim().toLowerCase();
+  phone = normPhone(phone);
+  if(!password || !email || !phone){ state.authError = t('fillAllFields'); render(); return; }
   if(password !== confirm){ state.authError = t('passwordMismatch'); render(); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.authError = t('badEmail'); render(); return; }
+  if(!/^01[0125]\d{8}$/.test(phone)){ state.authError = t('badPhone'); render(); return; }
   state.authError = '';
-  const code = generateTeacherCode();
-  try {
-    state.teacherCode = code;
-    state.settings.teacherPassword = password;
-    await pushByCode(code, {members: [], attendance: {}, payments: {}, config: cloudConfig()});
-    state.role = 'teacher';
-    saveLocal('teacherCode', code); saveLocal('role', 'teacher'); saveLocal('settings', state.settings);
-    state.members = []; state.attendance = {}; state.payments = {};
-    saveLocal('members', []); saveLocal('attendance', {}); saveLocal('payments', {});
-    markSyncPending(false);
-    state.authScreen = null;
-    state.welcomeMsg = t('newCodeCreated')(code);
-    checkNotices();
-    render();
-  } catch(e){
-    state.teacherCode = null;
-    state.authError = t('codeCreateFail');
-    render();
+  state.settings.teacherPassword = password;
+  const payload = {members: [], attendance: {}, payments: {}, config: cloudConfig()};
+  let code = null, err = null;
+  for(let i=0; i<3 && !code; i++){
+    const c = generateTeacherCode();
+    try {
+      state.license = await rpc('create_account', {p_code: c, p_email: email, p_phone: phone, p_payload: payload});
+      code = c;
+    } catch(e){ err = e; if(e.code !== 'code_taken') break; }
   }
+  if(!code){
+    state.settings.teacherPassword = '';
+    state.authError = err && err.code === 'contact_taken' ? t('contactTaken')
+                    : err && err.code === 'bad_email' ? t('badEmail')
+                    : err && err.code === 'bad_phone' ? t('badPhone') : t('codeCreateFail');
+    render(); return;
+  }
+  state.teacherCode = code;
+  state.role = 'teacher';
+  saveLocal('teacherCode', code); saveLocal('role', 'teacher'); saveLocal('settings', state.settings); saveLicense();
+  state.members = []; state.attendance = {}; state.payments = {};
+  saveLocal('members', []); saveLocal('attendance', {}); saveLocal('payments', {});
+  markSyncPending(false);
+  state.authScreen = null;
+  state.welcomeMsg = t('newCodeCreated')(code)+' '+t('trialStarted');
+  checkNotices();
+  render();
 }
 async function joinWithCode(codeInput, passwordInput){
   const code = (codeInput||'').trim().toUpperCase();
@@ -238,6 +334,7 @@ async function joinWithCode(codeInput, passwordInput){
     }
     saveLocal('members', state.members); saveLocal('attendance', state.attendance); saveLocal('payments', state.payments);
     markSyncPending(false);
+    await refreshLicense();
     state.authScreen = null;
     checkNotices();
     render();
@@ -255,6 +352,8 @@ function copyTeacherCode(){
 function doLogout(){
   saveLocal('teacherCode', null);
   saveLocal('role', null);
+  saveLocal('license', null);
+  state.license = null; state.licenseMsg = '';
   state.teacherCode = null;
   state.role = 'teacher';
   markSyncPending(false);
@@ -641,6 +740,161 @@ function exportPDF(){
 }
 
 // ---- Rendering ----
+// ---- Owner / admin console ----
+async function adminCall(name, args){ args.p_secret = state.adminSecret; return rpc(name, args); }
+async function adminRefresh(){
+  const r = await adminCall('admin_overview', {p_query: state.adm.query || ''});
+  state.adm.stats = r.stats; state.adm.accounts = r.accounts; state.adm.codes = r.codes;
+}
+async function adminLogin(secret){
+  secret = (secret||'').trim(); if(!secret) return;
+  state.adminSecret = secret;
+  try { await adminRefresh(); state.authError = ''; try{ sessionStorage.setItem('adm', secret); }catch(e){} }
+  catch(e){ state.adminSecret = null; state.authError = e.code === 'forbidden' ? t('adminBad') : t('adminFail'); }
+  render();
+}
+function adminLogout(){
+  state.adminSecret = null; state.adm.result = []; state.adm.msg = '';
+  try{ sessionStorage.removeItem('adm'); }catch(e){}
+  render();
+}
+async function adminRun(fn){
+  state.adm.msg = '';
+  try { await fn(); } catch(e){ state.adm.msg = e.code === 'forbidden' ? t('adminBad') : (e.code || t('adminFail')); }
+  render();
+}
+function adminSearch(){ adminRun(adminRefresh); }
+function adminGenerate(){
+  adminRun(async function(){
+    const n = parseInt(state.adm.count, 10) || 1;
+    state.adm.result = await adminCall('admin_generate', {p_plan: state.adm.plan, p_count: n, p_note: state.adm.note || null});
+    state.adm.resultNote = normPhone(state.adm.note);
+    await adminRefresh();
+  });
+}
+function adminGrant(id, action){
+  if(action === 'revoke' && !confirm(t('adminRevokeConfirm'))) return;
+  adminRun(async function(){ await adminCall('admin_grant', {p_id: id, p_action: action}); await adminRefresh(); state.adm.msg = t('adminDone'); });
+}
+function adminVoid(code){
+  adminRun(async function(){ await adminCall('admin_void_code', {p_code: code}); await adminRefresh(); });
+}
+function adminWaLink(phone, code, plan){
+  return 'https://wa.me/2'+phone+'?text='+encodeURIComponent(t('adminWaMsg')(code, t('plan_'+plan)));
+}
+function adminStatusText(st){
+  if(!st) return '';
+  if(st.state === 'lifetime') return t('statusLifetime');
+  if(st.state === 'trial') return t('statusTrial')(st.days_left);
+  if(st.state === 'active') return t('statusActive')(st.days_left);
+  return t('adminExpired');
+}
+function renderAdmin(){
+  const a = state.adm, s = a.stats || {};
+  let h = '<div class="d-flex justify-content-between align-items-center mb-3 pb-3 att-header"><p class="h4 fw-bold mb-0">'+t('adminTitle')+'</p>';
+  h += '<button class="btn btn-sm btn-outline-dark" onclick="adminLogout()">'+t('logout')+'</button></div>';
+  if(a.msg) h += '<div class="alert alert-success py-2 small">'+esc(a.msg)+'</div>';
+
+  h += '<div class="d-flex flex-wrap gap-1 mb-3">';
+  [['stAccounts','accounts'],['stTrial','trial'],['stActive','active'],['stLifetime','lifetime'],['stExpired','expired'],['stUnused','unused']].forEach(function(p){
+    h += '<span class="badge border fw-normal att-chip">'+t(p[0])+': <b>'+(s[p[1]]!=null?s[p[1]]:'–')+'</b></span>';
+  });
+  h += '</div>';
+
+  // generate
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminGenTitle')+'</h3><div class="d-flex flex-wrap gap-2 mb-2">';
+  ['monthly','yearly','lifetime'].forEach(function(p){
+    h += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(a.plan===p?'active':'')+'" onclick="state.adm.plan=\''+p+'\'; render();">'+t('plan_'+p)+'</button>';
+  });
+  h += '</div><div class="d-flex gap-2 mb-2"><input class="form-control form-control-sm" style="width:4.5rem" type="number" min="1" max="50" value="'+esc(a.count)+'" oninput="state.adm.count=this.value" title="'+t('adminCount')+'">';
+  h += '<input class="form-control form-control-sm" dir="ltr" placeholder="'+t('adminNotePh')+'" value="'+esc(a.note)+'" oninput="state.adm.note=this.value"></div>';
+  h += '<button class="btn btn-sm btn-dark" onclick="adminGenerate()">'+t('adminGenBtn')+'</button>';
+  if(a.result.length){
+    h += '<div class="mt-3">';
+    a.result.forEach(function(r){
+      h += '<div class="d-flex align-items-center gap-2 mb-2 flex-wrap"><span class="badge border fw-normal att-chip" dir="ltr" style="font-size:.95rem;letter-spacing:1px;padding:6px 10px">'+esc(r.code)+'</span>';
+      h += '<span class="small text-secondary">'+t('plan_'+r.plan)+'</span>';
+      h += '<button class="btn btn-sm btn-outline-dark" onclick="copyText(\''+esc(r.code)+'\', this)">'+t('payCopy')+'</button>';
+      if(/^01[0125]\d{8}$/.test(a.resultNote||'')) h += '<a class="btn btn-sm btn-outline-success" target="_blank" rel="noopener" href="'+adminWaLink(a.resultNote, r.code, r.plan)+'">'+t('adminSendWa')+'</a>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // accounts
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminFindTitle')+'</h3><div class="d-flex gap-2 mb-2">';
+  h += '<input class="form-control form-control-sm" dir="ltr" placeholder="'+t('adminQueryPh')+'" value="'+esc(a.query)+'" oninput="state.adm.query=this.value" onkeydown="if(event.key===\'Enter\') adminSearch()">';
+  h += '<button class="btn btn-sm btn-dark" onclick="adminSearch()">'+t('adminSearchBtn')+'</button></div>';
+  if(!a.accounts.length) h += '<p class="small text-secondary mb-0">'+t('adminNoResults')+'</p>';
+  a.accounts.forEach(function(x){
+    h += '<div class="border-top pt-2 mt-2 small"><div class="d-flex justify-content-between gap-2"><b dir="ltr">'+esc(x.id)+'</b><span style="color:var(--paid)">'+esc(adminStatusText(x.status))+'</span></div>';
+    h += '<div class="text-secondary" dir="ltr">'+esc(x.email||'—')+' · '+esc(x.phone||'—')+'</div><div class="d-flex flex-wrap gap-1 mt-1">';
+    [['month','adminAddMonth'],['year','adminAddYear'],['lifetime','adminLifetimeBtn']].forEach(function(b){
+      h += '<button class="btn btn-sm btn-outline-dark" onclick="adminGrant(\''+esc(x.id)+'\',\''+b[0]+'\')">'+t(b[1])+'</button>';
+    });
+    h += '<button class="btn btn-sm btn-outline-danger" onclick="adminGrant(\''+esc(x.id)+'\',\'revoke\')">'+t('adminRevokeBtn')+'</button></div></div>';
+  });
+  h += '</div>';
+
+  // unused codes
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminUnusedTitle')+'</h3>';
+  if(!a.codes.length) h += '<p class="small text-secondary mb-0">–</p>';
+  a.codes.forEach(function(c){
+    h += '<div class="d-flex align-items-center gap-2 py-1 border-top small flex-wrap"><span dir="ltr" style="letter-spacing:1px">'+esc(c.code)+'</span><span class="text-secondary">'+t('plan_'+c.plan)+'</span><span class="text-secondary nm" dir="ltr">'+esc(c.note||'')+'</span>';
+    h += '<button class="btn btn-sm btn-outline-dark" onclick="copyText(\''+esc(c.code)+'\', this)">'+t('payCopy')+'</button>';
+    h += '<button class="btn btn-sm btn-outline-danger" onclick="adminVoid(\''+esc(c.code)+'\')">'+t('adminVoid')+'</button></div>';
+  });
+  return h + '</div>';
+}
+
+function renderPayInfo(){
+  let h = '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('payTitle')+'</h3>';
+  h += '<ul class="small mb-2">';
+  ['monthly','yearly','lifetime'].forEach(function(p){
+    const pr = PAY.prices[p];
+    h += '<li>'+t('plan_'+p)+(pr!=null ? ' — '+pr+' ج.م' : '')+'</li>';
+  });
+  h += '</ul>';
+  [['payCard', PAY.card, true], ['payInstapay', PAY.instapay, false]].forEach(function(r){
+    h += '<div class="small text-secondary">'+t(r[0])+'</div>';
+    h += '<div class="d-flex align-items-center gap-2 mb-2"><span class="badge border fw-normal att-chip" dir="ltr" style="font-size:1rem;letter-spacing:1px;padding:6px 12px">'+r[1]+'</span>';
+    h += '<button class="btn btn-sm btn-outline-dark" onclick="copyText(\''+r[1]+'\', this)">'+t('payCopy')+'</button></div>';
+  });
+  h += '<p class="small mb-2">'+t('payStep')(PAY.whatsappDisplay)+'</p>';
+  h += '<a class="btn btn-sm btn-outline-success" target="_blank" rel="noopener" href="'+waLink()+'">'+t('payWhatsapp')+'</a></div>';
+  return h;
+}
+function renderActivation(){
+  let h = '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('activateTitle')+'</h3>';
+  if(state.licenseMsg){ h += '<div class="alert '+(state.licenseOk?'alert-success':'alert-danger')+' py-2 small">'+esc(state.licenseMsg)+'</div>'; }
+  h += '<div class="d-flex gap-2"><input id="actCodeInput" class="form-control form-control-sm" dir="ltr" style="text-transform:uppercase;letter-spacing:2px" maxlength="20" placeholder="XXXX-XXXX-XXXX" onkeydown="if(event.key===\'Enter\') redeemCode(this.value)">';
+  h += '<button class="btn btn-sm btn-dark" onclick="redeemCode(document.getElementById(\'actCodeInput\').value)">'+t('activateBtn')+'</button></div></div>';
+  return h;
+}
+function renderPaywall(){
+  let h = '<div class="mx-auto my-4 px-1"><div class="d-flex gap-2 mb-3">';
+  h += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(lang()==='ar'?'active':'')+'" onclick="setLang(\'ar\')">العربية</button>';
+  h += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(lang()==='en'?'active':'')+'" onclick="setLang(\'en\')">English</button></div>';
+  h += '<h2 class="h4 fw-bold mb-2">'+t('paywallTitle')+'</h2><p class="small text-secondary">'+t('paywallBody')+'</p>';
+  h += renderActivation() + renderPayInfo();
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('yourDataTitle')+'</h3><p class="small text-secondary">'+t('yourDataHint')+'</p>';
+  h += '<div class="d-flex flex-wrap gap-2"><button class="btn btn-sm btn-outline-dark" onclick="exportCSV()">'+t('exportCsvBtn')+'</button><button class="btn btn-sm btn-outline-dark" onclick="exportPDF()">'+t('exportPdfBtn')+'</button></div></div>';
+  h += '<button class="btn btn-sm btn-outline-dark" onclick="doLogout()">'+t('logout')+'</button></div>';
+  return h;
+}
+function renderLicenseSettings(){
+  const l = state.license || {}, d = licenseDaysLeft();
+  let line = '';
+  if(l.state === 'lifetime') line = t('statusLifetime');
+  else if(l.state === 'trial') line = t('statusTrial')(d);
+  else if(l.state === 'active') line = t('statusActive')(d);
+  let h = '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('subscriptionTitle')+'</h3>';
+  if(line) h += '<p class="small fw-semibold" style="color:var(--paid)">'+esc(line)+'</p>';
+  if(l.state !== 'lifetime'){ h += renderActivation() + '<details class="small"><summary class="mb-2">'+t('payTitle')+'</summary>'+renderPayInfo()+'</details>'; }
+  return h + '</div>';
+}
+
 function renderAuth(){
   let html = '<div class="mx-auto my-5 px-3 att-authwrap"><div class="d-flex justify-content-center gap-2 mb-3">';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(lang()==='ar'?'active':'')+'" onclick="setLang(\'ar\')">العربية</button>';
@@ -649,10 +903,13 @@ function renderAuth(){
   html += '<h2 class="h4 text-center fw-bold mb-3">'+t('appTitle')+'</h2>';
   if(state.authError) html += '<div class="alert alert-danger py-2 small">'+esc(state.authError)+'</div>';
   html += '<div class="d-flex flex-wrap gap-2" style="justify-content:center;margin-bottom:14px">';
-  html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.authMode!=='join'?'active':'')+'" onclick="state.authMode=\'create\'; state.authError=\'\'; render();">'+t('newCodeTab')+'</button>';
+  html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+((state.authMode!=='join' && state.authMode!=='admin')?'active':'')+'" onclick="state.authMode=\'create\'; state.authError=\'\'; render();">'+t('newCodeTab')+'</button>';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.authMode==='join'?'active':'')+'" onclick="state.authMode=\'join\'; state.authError=\'\'; render();">'+t('joinCodeTab')+'</button>';
   html += '</div>';
-  if(state.authMode==='join'){
+  if(state.authMode==='admin'){
+    html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('adminSecretLabel')+'</label><input id="adminSecretInput" class="form-control form-control-sm" type="password" dir="ltr" onkeydown="if(event.key===\'Enter\') adminLogin(this.value)"></div>';
+    html += '<button class="btn btn-dark w-100 mt-1" onclick="adminLogin(document.getElementById(\'adminSecretInput\').value)">'+t('adminLoginBtn')+'</button>';
+  } else if(state.authMode==='join'){
     html += '<p class="small text-secondary" style="margin-bottom:8px">'+t('joinCodeHint')+'</p>';
     html += '<div class="mb-3"><input id="joinCodeInput" class="form-control form-control-sm" type="text" style="text-align:center;font-size:1.3rem;letter-spacing:3px;text-transform:uppercase" maxlength="6" placeholder="ABC123" value="'+esc(state.joinCodeDraft||'')+'" oninput="state.joinCodeDraft=this.value"></div>';
     html += '<div class="d-flex flex-wrap gap-2" style="margin-bottom:10px"><button class="btn btn-sm rounded-pill btn-outline-dark '+(state.joinRole!=='assistant'?'active':'')+'" onclick="state.joinRole=\'teacher\'; render();">'+t('joinAsTeacherTab')+'</button>';
@@ -662,12 +919,15 @@ function renderAuth(){
     }
     html += '<button class="btn btn-dark w-100 mt-1" onclick="joinWithCode(document.getElementById(\'joinCodeInput\').value, document.getElementById(\'joinPasswordInput\')?document.getElementById(\'joinPasswordInput\').value:\'\')">'+t('joinBtn')+'</button>';
   } else {
-    html += '<p class="small text-secondary" style="margin-bottom:12px">'+t('newCodeHint')+'</p>';
+    html += '<p class="small text-secondary" style="margin-bottom:8px">'+t('newCodeHint')+'</p>';
+    html += '<p class="small fw-semibold" style="margin-bottom:12px;color:var(--paid)">'+t('trialNote')+'</p>';
+    html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('emailLabel')+'</label><input id="newEmailInput" class="form-control form-control-sm" type="email" dir="ltr" autocomplete="email"></div>';
+    html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('phoneLabel')+'</label><input id="newPhoneInput" class="form-control form-control-sm" type="tel" dir="ltr" inputmode="tel" autocomplete="tel" placeholder="01xxxxxxxxx"></div>';
     html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('password')+'</label><input id="newPasswordInput" class="form-control form-control-sm" type="password"></div>';
-    html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('confirmPassword')+'</label><input id="newPasswordConfirmInput" class="form-control form-control-sm" type="password" onkeydown="if(event.key==\'Enter\') createNewCode(document.getElementById(\'newPasswordInput\').value, this.value)"></div>';
-    html += '<button class="btn btn-dark w-100 mt-1" onclick="createNewCode(document.getElementById(\'newPasswordInput\').value, document.getElementById(\'newPasswordConfirmInput\').value)">'+t('createCodeBtn')+'</button>';
+    html += '<div class="mb-3"><label class="form-label small text-secondary">'+t('confirmPassword')+'</label><input id="newPasswordConfirmInput" class="form-control form-control-sm" type="password" onkeydown="if(event.key===\'Enter\') submitSignup()"></div>';
+    html += '<button class="btn btn-dark w-100 mt-1" onclick="submitSignup()">'+t('createCodeBtn')+'</button>';
   }
-  html += '</div></div>';
+  html += '</div><div class="text-center mt-3"><a href="#" class="small text-secondary" onclick="state.authMode=\'admin\'; state.authError=\'\'; render(); return false;">'+t('adminLink')+'</a></div></div>';
   return html;
 }
 
@@ -685,6 +945,10 @@ function renderNotices(){
   let html = '';
   if(state.pendingSync){
     html += '<div class="alert alert-danger alert-dismissible py-2 small">'+esc(t('pendingSyncBanner'))+'</div>';
+  }
+  const _d = licenseDaysLeft();
+  if(state.license && (state.license.state==='trial' || state.license.state==='active') && _d!==null && _d<=7){
+    html += '<div class="alert alert-danger py-2 small d-flex justify-content-between align-items-center gap-2"><span>'+esc(t('expiringBanner')(_d))+'</span><button class="btn btn-sm btn-outline-danger" onclick="state.screen=\'settings\'; render();">'+t('renewBtn')+'</button></div>';
   }
   if(state.welcomeMsg){
     html += '<div class="alert alert-success alert-dismissible py-2 small"><button class="btn-close" onclick="state.welcomeMsg=\'\'; render();"></button>'+esc(state.welcomeMsg)+'</div>';
@@ -812,7 +1076,7 @@ function renderMain(){
     html += '<span class="att-caldwrap"><button class="btn btn-sm btn-dark att-calbtn" tabindex="-1">&#128197;</button><input class="att-realdate" type="date" value="'+state.selectedDate+'" onchange="onDateChange(this.value)"></span>';
     html += '</div>';
   } else { html += '<div></div>'; }
-  html += '<div class="d-flex align-items-center gap-2"><div class="input-group input-group-sm att-search"><span class="input-group-text">&#128269;</span><input class="form-control" placeholder="'+t('searchPlaceholder')+'" value="'+esc(state.search)+'" oninput="state.search=this.value; render();"></div>';
+  html += '<div class="d-flex align-items-center gap-2"><div class="input-group input-group-sm att-search"><span class="input-group-text">&#128269;</span><input class="form-control" placeholder="'+t('searchPlaceholder')+'" value="'+esc(state.search)+'" oninput="onSearchInput(this)"></div>';
   html += '<button class="btn btn-sm btn-outline-dark" onclick="state.sortDir=state.sortDir===\'asc\'?\'desc\':\'asc\'; render();">'+(state.sortDir==='asc'?t('sortAsc'):t('sortDesc'))+'</button></div>';
   html += '</div>';
 
@@ -981,6 +1245,8 @@ function renderSettings(){
   if(state.syncStatus){ html += '<p class="small text-secondary mt-1">'+esc(state.syncStatus)+'</p>'; }
   html += '<div class="d-flex flex-wrap gap-2" style="margin-top:8px"><button class="btn btn-sm btn-outline-dark" onclick="syncNow()">'+t('syncNow')+'</button><button class="btn btn-sm btn-outline-dark" onclick="doLogout()">'+t('logout')+'</button></div></div>';
 
+  html += renderLicenseSettings();
+
   if(isTeacher()){
     html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('teacherPasswordTitle')+'</h3><p class="small text-secondary">'+t('teacherPasswordHint')+'</p>';
     html += '<input id="teacherPasswordInput" class="form-control form-control-sm" type="password" placeholder="'+t('password')+'" value="">';
@@ -1076,7 +1342,9 @@ function renderSettings(){
 function render(){
   const app = document.getElementById('app');
   if(!state.ready){ app.innerHTML = '<div class="text-center text-secondary small py-4">'+t('loading')+'</div>'; return; }
+  if(state.adminSecret){ app.innerHTML = renderAdmin(); return; }
   if(state.authScreen){ app.innerHTML = renderAuth(); return; }
+  if(isExpired()){ app.innerHTML = renderPaywall(); return; }
   if(state.screen==='settings'){ app.innerHTML = renderSettings(); return; }
   if(state.screen==='detail'){ app.innerHTML = renderDetail(); return; }
   app.innerHTML = renderMain();
@@ -1089,4 +1357,5 @@ if('serviceWorker' in navigator){
   });
 }
 
+try{ const _adm = sessionStorage.getItem('adm'); if(_adm) adminLogin(_adm); }catch(e){}
 initLoad();
