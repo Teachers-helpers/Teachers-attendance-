@@ -51,7 +51,7 @@ let state = {
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
   license: null, licenseMsg: '', licenseOk: false, prices: null, adminSecret: null,
-  adm: {prices:{monthly:'',yearly:'',lifetime:''}, plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
+  adm: {msgErr:false, prices:{monthly:'',yearly:'',lifetime:''}, plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
   adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, draftManual: false, amountDrafts: {},
@@ -77,6 +77,16 @@ async function fetchByCode(code){
   return (rows && rows[0] && rows[0].payload) || null;
 }
 async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
+const APP_VERSION = 'v17';
+// clears the saved copy of the app on this device and reloads, so the newest files are used
+async function forceUpdate(){
+  try { const regs = await navigator.serviceWorker.getRegistrations(); for(const r of regs) await r.unregister(); } catch(e){}
+  try { const keys = await caches.keys(); for(const k of keys) await caches.delete(k); } catch(e){}
+  location.reload();
+}
+function versionLine(){
+  return '<div class="d-flex align-items-center gap-2 small text-secondary mb-3"><span dir="ltr">'+APP_VERSION+'</span><button class="btn btn-sm btn-outline-dark" onclick="forceUpdate()">'+t('updateApp')+'</button></div>';
+}
 // ---- Licensing (trial + activation codes) ----
 // Fill in your prices (EGP) here; leave null to hide a price.
 const PAY = {
@@ -985,8 +995,8 @@ function adminLogout(){
   render();
 }
 async function adminRun(fn){
-  state.adm.msg = '';
-  try { await fn(); } catch(e){ state.adm.msg = e.code === 'forbidden' ? t('adminBad') : (e.code || e.message || t('adminFail')); }
+  state.adm.msg = ''; state.adm.msgErr = false;
+  try { await fn(); } catch(e){ state.adm.msgErr = true; state.adm.msg = e.code === 'forbidden' ? t('adminBad') : (e.code || e.message || t('adminFail')); }
   render();
 }
 function adminSearch(){ adminRun(adminRefresh); }
@@ -1019,7 +1029,8 @@ function renderAdmin(){
   const a = state.adm, s = a.stats || {};
   let h = '<div class="d-flex justify-content-between align-items-center mb-3 pb-3 att-header"><p class="h4 fw-bold mb-0">'+t('adminTitle')+'</p>';
   h += '<button class="btn btn-sm btn-outline-dark" onclick="adminLogout()">'+t('logout')+'</button></div>';
-  if(a.msg) h += '<div class="alert alert-success py-2 small">'+esc(a.msg)+'</div>';
+  h += versionLine();
+  if(a.msg) h += '<div class="alert '+(a.msgErr?'alert-danger':'alert-success')+' py-2 small" dir="auto">'+esc(a.msg)+'</div>';
 
   h += '<div class="d-flex flex-wrap gap-1 mb-3">';
   [['stAccounts','accounts'],['stTrial','trial'],['stActive','active'],['stLifetime','lifetime'],['stExpired','expired'],['stUnused','unused']].forEach(function(p){
@@ -1622,6 +1633,7 @@ function renderSettings(){
   html += '<div class="mb-3 pb-3"><p class="small text-secondary">'+t('teacherOnlyNote')+'</p></div>';
   }
 
+  html += versionLine();
   return html;
 }
 

@@ -125,7 +125,7 @@ const T = {
     pauseBad: 'اختر تاريخ بداية ونهاية صحيحين.',
     pauseBanner: (d, l) => 'المدفوعات متوقفة'+(l ? ' ('+l+')' : '')+' — تعود بتاريخ '+d,
     adminPricesTitle: 'أسعار الاشتراك', adminPriceHint: 'تظهر للمعلمين في طريقة الاشتراك. اترك الخانة فارغة لإخفاء السعر.',
-    adminSavePrices: 'حفظ الأسعار', adminPricesSaved: 'تم حفظ الأسعار ✓', adminBadPrice: 'اكتب رقمًا صحيحًا.'
+    adminSavePrices: 'حفظ الأسعار', adminPricesSaved: 'تم حفظ الأسعار ✓', adminBadPrice: 'اكتب رقمًا صحيحًا.', updateApp: 'تحديث التطبيق'
   },
   en: {
     appTitle: 'Register', add: '+ Add', settings: 'Settings', back: '&#8592; Back',
@@ -243,6 +243,6 @@ const T = {
     pauseBad: 'Choose a valid start and end date.',
     pauseBanner: (d, l) => 'Payments are paused'+(l ? ' ('+l+')' : '')+' — resume on '+d,
     adminPricesTitle: 'Subscription prices', adminPriceHint: 'Shown to teachers under How to subscribe. Leave a field empty to hide that price.',
-    adminSavePrices: 'Save prices', adminPricesSaved: 'Prices saved ✓', adminBadPrice: 'Enter a valid number.'
+    adminSavePrices: 'Save prices', adminPricesSaved: 'Prices saved ✓', adminBadPrice: 'Enter a valid number.', updateApp: 'Update app'
   }
 };
