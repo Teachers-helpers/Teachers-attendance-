@@ -125,7 +125,16 @@ const T = {
     pauseBad: 'اختر تاريخ بداية ونهاية صحيحين.',
     pauseBanner: (d, l) => 'المدفوعات متوقفة'+(l ? ' ('+l+')' : '')+' — تعود بتاريخ '+d,
     adminPricesTitle: 'أسعار الاشتراك', adminPriceHint: 'تظهر للمعلمين في طريقة الاشتراك. اترك الخانة فارغة لإخفاء السعر.',
-    adminSavePrices: 'حفظ الأسعار', adminPricesSaved: 'تم حفظ الأسعار ✓', adminBadPrice: 'اكتب رقمًا صحيحًا.', updateApp: 'تحديث التطبيق'
+    adminSavePrices: 'حفظ الأسعار', adminPricesSaved: 'تم حفظ الأسعار ✓', adminBadPrice: 'اكتب رقمًا صحيحًا.', updateApp: 'تحديث التطبيق',
+    kind_months: 'شهور', kind_days: 'أيام', kind_school_year: 'العام الدراسي', kind_lifetime: 'مدى الحياة',
+    planKindLifetime: 'مدى الحياة', planMonthsN: n => n==1 ? 'شهر واحد' : n==2 ? 'شهران' : n<=10 ? n+' شهور' : n+' شهرًا', planDaysN: n => n==1 ? 'يوم واحد' : n==2 ? 'يومان' : n<=10 ? n+' أيام' : n+' يومًا',
+    planSchoolYear: 'العام الدراسي كامل', planSchoolYearRange: (a, b) => 'العام الدراسي: من '+a+' إلى '+b,
+    adminPlansTitle: 'خطط الاشتراك', adminPlansHint: 'عدّل الاسم والسعر والمدة لكل خطة، أو أضف خطة جديدة. الخطة غير المفعّلة لا تظهر للمعلمين ولا يمكن إنشاء أكواد لها.',
+    adminAddPlan: '+ خطة جديدة', adminSavePlan: 'حفظ', adminActive: 'مفعّلة', adminNamePhAr: 'الاسم بالعربي', adminNamePhEn: 'الاسم بالإنجليزي',
+    adminAmountPh: 'العدد', adminPricePh: 'السعر', adminPlanSaved: 'تم حفظ الخطة ✓', adminNoPlans: 'لا توجد خطط مفعّلة.',
+    adminYearTitle: 'العام الدراسي للاشتراك السنوي', adminYearHint: 'الاشتراك السنوي يبدأ قبل بداية الدراسة وينتهي بعد نهايتها بعدد الأيام المحدد.',
+    adminBefore: 'أيام قبل البداية', adminAfter: 'أيام بعد النهاية', adminSaveYear: 'حفظ العام الدراسي', adminYearSaved: 'تم حفظ العام الدراسي ✓',
+    codeYearNotSet: 'لم يتم تحديد العام الدراسي بعد. تواصل معنا.'
   },
   en: {
     appTitle: 'Register', add: '+ Add', settings: 'Settings', back: '&#8592; Back',
@@ -243,6 +252,15 @@ const T = {
     pauseBad: 'Choose a valid start and end date.',
     pauseBanner: (d, l) => 'Payments are paused'+(l ? ' ('+l+')' : '')+' — resume on '+d,
     adminPricesTitle: 'Subscription prices', adminPriceHint: 'Shown to teachers under How to subscribe. Leave a field empty to hide that price.',
-    adminSavePrices: 'Save prices', adminPricesSaved: 'Prices saved ✓', adminBadPrice: 'Enter a valid number.', updateApp: 'Update app'
+    adminSavePrices: 'Save prices', adminPricesSaved: 'Prices saved ✓', adminBadPrice: 'Enter a valid number.', updateApp: 'Update app',
+    kind_months: 'Months', kind_days: 'Days', kind_school_year: 'School year', kind_lifetime: 'Lifetime',
+    planKindLifetime: 'Lifetime', planMonthsN: n => n+(n==1 ? ' month' : ' months'), planDaysN: n => n+(n==1 ? ' day' : ' days'),
+    planSchoolYear: 'Whole school year', planSchoolYearRange: (a, b) => 'School year: '+a+' to '+b,
+    adminPlansTitle: 'Subscription plans', adminPlansHint: 'Edit the name, price and length of each plan, or add a new one. A plan that is not active is hidden from teachers and no codes can be made for it.',
+    adminAddPlan: '+ New plan', adminSavePlan: 'Save', adminActive: 'Active', adminNamePhAr: 'Arabic name', adminNamePhEn: 'English name',
+    adminAmountPh: 'Count', adminPricePh: 'Price', adminPlanSaved: 'Plan saved ✓', adminNoPlans: 'No active plans.',
+    adminYearTitle: 'School year for the yearly plan', adminYearHint: 'The yearly plan starts before the school year begins and ends after it finishes, by the number of days set here.',
+    adminBefore: 'Days before start', adminAfter: 'Days after end', adminSaveYear: 'Save school year', adminYearSaved: 'School year saved ✓',
+    codeYearNotSet: 'The school year has not been set yet. Contact us.'
   }
 };
