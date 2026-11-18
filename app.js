@@ -6,7 +6,7 @@ const GROUPS = [
   {id:'mon_thu', days:[1,4]}
 ];
 const FONT_SCALES = {small: 0.9, medium: 1, large: 1.2};
-const DEFAULT_SETTINGS = {fee: 50, fontSize: 'medium', highContrast: false, cycleMode: 'personal', lang: 'ar', lastSeenMonth: '', hourSlots: {sat_tue: [], sun_wed: [], mon_thu: []}, grades: [], teacherPassword: ''};
+const DEFAULT_SETTINGS = {fee: 50, fontSize: 'medium', highContrast: false, cycleMode: 'personal', lang: 'ar', lastSeenMonth: '', hourSlots: {sat_tue: [], sun_wed: [], mon_thu: []}, grades: [], slotGrades: {sat_tue:{}, sun_wed:{}, mon_thu:{}}, schoolYear: {start:'',end:''}, pauses: [], teacherPassword: '', payPlan: 'sessions', terms: {sat_tue: {start:'',end:''}, sun_wed: {start:'',end:''}, mon_thu: {start:'',end:''}}};
 
 
 function onSearchInput(el){
@@ -54,7 +54,7 @@ let state = {
   adm: {plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
-  adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, amountDrafts: {},
+  adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, draftManual: false, amountDrafts: {},
   bulkSelected: {}, bulkTargetGroup: GROUPS[0].id, syncStatus: '', importStatus: '', newHourSlotDraft: {}, advanceDrafts: {},
   showGrades: false, selectedGrade: 'all', gradesEditMode: false, renamingGrade: null
 };
@@ -157,7 +157,7 @@ function submitSignup(){
 }
 
 function cloudConfig(){
-  return {fee: state.settings.fee, cycleMode: state.settings.cycleMode, hourSlots: state.settings.hourSlots, grades: state.settings.grades, teacherPassword: state.settings.teacherPassword};
+  return {fee: state.settings.fee, cycleMode: state.settings.cycleMode, hourSlots: state.settings.hourSlots, grades: state.settings.grades, slotGrades: state.settings.slotGrades, schoolYear: state.settings.schoolYear, pauses: state.settings.pauses, teacherPassword: state.settings.teacherPassword, payPlan: state.settings.payPlan, terms: state.settings.terms};
 }
 function buildPayload(){
   return {members: state.members, attendance: state.attendance, payments: state.payments, config: cloudConfig()};
@@ -247,8 +247,11 @@ async function initLoad(){
         if(remote && remote.config){
           state.settings.fee = remote.config.fee != null ? remote.config.fee : state.settings.fee;
           state.settings.cycleMode = remote.config.cycleMode || state.settings.cycleMode;
+      state.settings.payPlan = remote.config.payPlan || state.settings.payPlan || 'sessions'; state.settings.terms = remote.config.terms || state.settings.terms;
           state.settings.hourSlots = remote.config.hourSlots || state.settings.hourSlots;
           state.settings.grades = remote.config.grades || state.settings.grades;
+      state.settings.slotGrades = remote.config.slotGrades || state.settings.slotGrades || {};
+      state.settings.schoolYear = remote.config.schoolYear || state.settings.schoolYear; state.settings.pauses = remote.config.pauses || state.settings.pauses || [];
           state.settings.teacherPassword = remote.config.teacherPassword || '';
           saveLocal('settings', state.settings);
         }
@@ -327,8 +330,11 @@ async function joinWithCode(codeInput, passwordInput){
     if(remote.config){
       state.settings.fee = remote.config.fee != null ? remote.config.fee : state.settings.fee;
       state.settings.cycleMode = remote.config.cycleMode || state.settings.cycleMode;
+      state.settings.payPlan = remote.config.payPlan || state.settings.payPlan || 'sessions'; state.settings.terms = remote.config.terms || state.settings.terms;
       state.settings.hourSlots = remote.config.hourSlots || state.settings.hourSlots;
       state.settings.grades = remote.config.grades || state.settings.grades;
+      state.settings.slotGrades = remote.config.slotGrades || state.settings.slotGrades || {};
+      state.settings.schoolYear = remote.config.schoolYear || state.settings.schoolYear; state.settings.pauses = remote.config.pauses || state.settings.pauses || [];
       state.settings.teacherPassword = storedPw;
       saveLocal('settings', state.settings);
     }
@@ -366,9 +372,11 @@ function addMember(name, phone, parentPhone){
   name = name.trim();
   if(!name) return;
   const id = 'm_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-  state.members.push({id, name, group: state.draftGroup, exempt:false, hourSlot: state.draftHourSlot || null, grade: state.draftGrade || null, phone: (phone||'').trim(), parentPhone: (parentPhone||'').trim()});
+  state.members.push({id, name, group: state.draftGroup, exempt:false, joined: todayISO(), hourSlot: state.draftHourSlot || null, grade: state.draftGrade || null, phone: (phone||'').trim(), parentPhone: (parentPhone||'').trim()});
   persistAll();
-  state.adding = false; state.draftHourSlot = null; state.draftGrade = null;
+  state.welcomeMsg = t('memberAddedAt')(name, timeText(state.draftGroup, state.draftHourSlot));
+  state.selectedGroup = state.draftGroup; state.selectedHourSlot = 'all';
+  state.adding = false; state.draftHourSlot = null; state.draftGrade = null; state.draftManual = false;
   render();
 }
 function updateMemberContact(id, field, value){
@@ -389,22 +397,50 @@ function moveMemberHourSlot(id, slot){
   if(m){ m.hourSlot = slot; persistAll(); render(); }
 }
 function getHourSlots(groupId){ return (state.settings.hourSlots && state.settings.hourSlots[groupId]) || []; }
-function addHourSlot(groupId, text){
+function slotGradeOf(groupId, slot){ return (((state.settings.slotGrades||{})[groupId])||{})[slot] || null; }
+function addHourSlot(groupId, text, grade){
   text = (text||'').trim();
   if(!text) return;
+  const label = grade ? text+' '+grade : text;
   const list = getHourSlots(groupId);
-  if(list.includes(text)) return;
-  state.settings.hourSlots[groupId] = [...list, text];
+  if(list.includes(label)) return;
+  state.settings.hourSlots[groupId] = [...list, label];
+  if(grade){
+    state.settings.slotGrades = state.settings.slotGrades || {};
+    state.settings.slotGrades[groupId] = state.settings.slotGrades[groupId] || {};
+    state.settings.slotGrades[groupId][label] = grade;
+  }
   persistSettings();
   state.newHourSlotDraft[groupId] = '';
   render();
 }
+function submitHourSlot(g){
+  const i = document.getElementById('hourSlotInput_'+g), sel = document.getElementById('hourSlotGrade_'+g);
+  addHourSlot(g, i ? i.value : '', sel ? sel.value : '');
+}
 function removeHourSlot(groupId, slot){
   state.settings.hourSlots[groupId] = getHourSlots(groupId).filter(function(s){return s!==slot;});
+  if(state.settings.slotGrades && state.settings.slotGrades[groupId]) delete state.settings.slotGrades[groupId][slot];
   state.members.forEach(function(m){ if(m.group===groupId && m.hourSlot===slot) m.hourSlot = null; });
   persistSettings(); persistAll();
   render();
 }
+// registration: after the grade is chosen, offer the times that were set up for that grade
+function timeOptionsForGrade(grade){
+  const out = [];
+  if(!grade) return out;
+  GROUPS.forEach(function(g){ getHourSlots(g.id).forEach(function(slot){ if(slotGradeOf(g.id, slot) === grade) out.push({group: g.id, slot: slot}); }); });
+  return out;
+}
+function timeText(groupId, slot){ return t('groupLabel')[groupId] + (slot ? ' — '+slot : ''); }
+function setDraftGrade(grade){
+  state.draftGrade = grade; state.draftManual = false;
+  const opts = timeOptionsForGrade(grade);
+  state.draftHourSlot = null;
+  if(opts.length === 1){ state.draftGroup = opts[0].group; state.draftHourSlot = opts[0].slot; }
+  render();
+}
+function pickTime(groupId, slot){ state.draftGroup = groupId; state.draftHourSlot = slot; state.draftManual = false; render(); }
 function getGrades(){ return state.settings.grades || []; }
 function addGrade(name){
   name = (name||'').trim();
@@ -420,6 +456,7 @@ function removeGrade(name){
   state.members.forEach(function(m){ if(m.grade===name) m.grade = null; });
   if(state.selectedGrade===name) state.selectedGrade = 'all';
   if(state.draftGrade===name) state.draftGrade = null;
+  GROUPS.forEach(function(g){ const sg = (state.settings.slotGrades||{})[g.id]; if(sg) Object.keys(sg).forEach(function(k){ if(sg[k]===name) delete sg[k]; }); });
   persistSettings(); persistAll();
   render();
 }
@@ -432,6 +469,17 @@ function renameGrade(oldName, newName){
   state.members.forEach(function(m){ if(m.grade===oldName) m.grade = newName; });
   if(state.selectedGrade===oldName) state.selectedGrade = newName;
   if(state.draftGrade===oldName) state.draftGrade = newName;
+  GROUPS.forEach(function(g){
+    const sg = (state.settings.slotGrades||{})[g.id]; if(!sg) return;
+    Object.keys(sg).forEach(function(label){
+      if(sg[label] !== oldName) return;
+      const nl = label.endsWith(oldName) ? label.slice(0, label.length-oldName.length)+newName : label;
+      state.settings.hourSlots[g.id] = getHourSlots(g.id).map(function(x){ return x===label ? nl : x; });
+      state.members.forEach(function(m){ if(m.group===g.id && m.hourSlot===label) m.hourSlot = nl; });
+      if(state.draftGroup===g.id && state.draftHourSlot===label) state.draftHourSlot = nl;
+      delete sg[label]; sg[nl] = newName;
+    });
+  });
   persistSettings(); persistAll();
   render();
 }
@@ -468,14 +516,147 @@ function groupSessionCount(groupId){
 function cycleCount(id){
   const m = state.members.find(function(x){return x.id===id;});
   if(!m) return 0;
-  return state.settings.cycleMode==='group' ? groupSessionCount(m.group) : attendanceCount(id);
+  const asOf = payAsOf(), tm = termEffective(m.group);
+  const ok = function(date){ return date <= asOf && (!tm.start || date >= tm.start) && (!tm.end || date <= tm.end); };
+  let ids = [id];
+  if(state.settings.cycleMode==='group') ids = state.members.filter(function(x){return x.group===m.group;}).map(function(x){return x.id;});
+  let c = 0;
+  for(const date in state.attendance){
+    if(ok(date) && state.attendance[date].some(function(x){return ids.includes(x);})) c++;
+  }
+  return c;
 }
-function currentCycle(id){ return Math.floor(cycleCount(id)/CYCLE_LENGTH); }
+// ---- School year + payment pause (e.g. winter break) ----
+// During a pause nothing new becomes due; whatever would have been due is collected after the pause ends.
+function pauseRanges(){ return (state.settings.pauses||[]).filter(function(p){return p.from && p.to;}); }
+function pauseAt(iso){ return pauseRanges().find(function(p){return iso >= p.from && iso <= p.to;}) || null; }
+function isPaused(){ return !!pauseAt(todayISO()); }
+function payAsOf(){
+  let d = todayISO(), p, guard = 0;
+  while((p = pauseAt(d)) && guard++ < 20) d = shiftDay(p.from, -1);
+  return d;
+}
+function deferDue(iso){
+  let p, guard = 0;
+  while((p = pauseAt(iso)) && guard++ < 20) iso = shiftDay(p.to, 1);
+  return iso;
+}
+function termEffective(g){
+  const raw = ((state.settings.terms||{})[g]) || {}, sy = state.settings.schoolYear || {};
+  return {start: raw.start || sy.start || '', end: raw.end || sy.end || ''};
+}
+function addPause(){
+  const v = function(id){ const e = document.getElementById(id); return e ? e.value : ''; };
+  const from = v('pauseFrom'), to = v('pauseTo'), label = (v('pauseLabel')||'').trim();
+  if(!from || !to || to < from){ alert(t('pauseBad')); return; }
+  state.settings.pauses = (state.settings.pauses||[]).concat([{from: from, to: to, label: label}]);
+  persistSettings(); render();
+}
+function removePause(i){
+  state.settings.pauses = (state.settings.pauses||[]).filter(function(_, k){return k !== i;});
+  persistSettings(); render();
+}
+function setSchoolYear(which, v){
+  const sy = Object.assign({start:'', end:''}, state.settings.schoolYear || {});
+  sy[which] = v || '';
+  if(sy.start && sy.end && sy.end < sy.start){ alert(t('termBad')); render(); return; }
+  state.settings.schoolYear = sy; persistSettings(); render();
+}
+// ---- Payment plan: 'sessions' (every 8 attendance days) | 'month_start' | 'month_end' ----
+// Monthly plans: one payment per calendar month, from each class's start date to its end date.
+function payPlan(){ return state.settings.payPlan || 'sessions'; }
+function isMonthly(){ return payPlan() !== 'sessions'; }
+function isoOf(y, m, d){ return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
+function getTerm(g){ const x = (state.settings.terms||{})[g] || {}; return {start: x.start||'', end: x.end||''}; }
+function setTermDate(g, which, v){
+  state.settings.terms = state.settings.terms || {};
+  const cur = Object.assign({}, state.settings.terms[g] || {});
+  cur[which] = v || '';
+  if(cur.start && cur.end && cur.end < cur.start){ alert(t('termBad')); render(); return; }
+  state.settings.terms[g] = cur;
+  persistSettings(); render();
+}
+function setPayPlan(p){
+  if(p === payPlan()) return;
+  if(Object.keys(state.payments).length && !confirm(t('payPlanConfirm'))) return;
+  state.settings.payPlan = p;
+  persistSettings(); render();
+}
+function termStartISO(g){
+  const s = termEffective(g).start; if(s) return s;
+  // no start date set: use the first day this class had attendance
+  const ids = state.members.filter(function(x){return x.group===g;}).map(function(x){return x.id;});
+  let first = '';
+  for(const date in state.attendance){
+    if(state.attendance[date].some(function(id){return ids.includes(id);}) && (first==='' || date<first)) first = date;
+  }
+  return first;
+}
+function monthSchedule(g){
+  // one entry per calendar month of the class: {key:'YYYY-MM', due:'YYYY-MM-DD'}
+  const start = termStartISO(g); if(!start) return [];
+  const end = termEffective(g).end, endKey = end ? end.slice(0,7) : null, today = todayISO();
+  let y = +start.slice(0,4), m = +start.slice(5,7)-1;
+  const list = [];
+  for(let i=0; i<240; i++){
+    const key = y+'-'+String(m+1).padStart(2,'0');
+    if(endKey && key > endKey) break;
+    let due;
+    if(payPlan()==='month_start'){ due = isoOf(y, m, 1); if(due < start) due = start; }
+    else { due = isoOf(y, m, new Date(y, m+1, 0).getDate()); if(end && end < due) due = end; }
+    due = deferDue(due);
+    list.push({key: key, due: due});
+    if(!endKey && due > today) break;
+    m++; if(m>11){ m=0; y++; }
+  }
+  return list;
+}
+function monthKeyOf(g, cycle){
+  const s = termStartISO(g); if(!s) return '';
+  let y = +s.slice(0,4), m = +s.slice(5,7)-1 + (cycle-1);
+  y += Math.floor(m/12); m = ((m%12)+12)%12;
+  return y+'-'+String(m+1).padStart(2,'0');
+}
+function monthLabel(key){ return key ? MONTH_NAMES[lang()][+key.slice(5,7)-1]+' '+key.slice(0,4) : ''; }
+function cycleName(g, cycle){ return isMonthly() ? (monthLabel(monthKeyOf(g, cycle)) || String(cycle)) : String(cycle); }
+function cycleBadge(g, cycle){ return isMonthly() ? cycleName(g, cycle) : t('cycleLabel')+' '+cycle; }
+function memberStartISO(m){
+  // a member only owes months from when they joined (or first attended, whichever is earlier)
+  let join = m.joined || '';
+  if(!join){
+    const ms = parseInt(String(m.id).slice(2,10), 36);
+    if(ms > 1.5e12 && ms < Date.now()+864e5){ const d = new Date(ms); join = isoOf(d.getFullYear(), d.getMonth(), d.getDate()); }
+  }
+  let first = '';
+  for(const date in state.attendance){ if(state.attendance[date].includes(m.id) && (first==='' || date<first)) first = date; }
+  return (join && first) ? (join < first ? join : first) : (join || first);
+}
+function firstCycle(m){
+  const sch = monthSchedule(m.group), ms = memberStartISO(m);
+  if(!ms || sch.length===0) return 1;
+  for(let i=0; i<sch.length; i++){ if(sch[i].key >= ms.slice(0,7)) return i+1; }
+  return sch.length+1;
+}
+function monthlyNotDueText(m){
+  const sch = monthSchedule(m.group);
+  if(sch.length===0) return t('setStartDate');
+  const e = sch[Math.max(0, firstCycle(m)-1)];
+  return e ? t('firstDueOn')(formatDateAr(e.due)) : t('termEnded');
+}
+function currentCycle(id){
+  if(!isMonthly()) return Math.floor(cycleCount(id)/CYCLE_LENGTH);
+  const m = state.members.find(function(x){return x.id===id;}); if(!m) return 0;
+  const today = todayISO();
+  const due = monthSchedule(m.group).filter(function(e){return e.due <= today;}).length;
+  return due >= firstCycle(m) ? due : 0;
+}
 function unpaidCycleList(id){
   const dueCycle = currentCycle(id);
   if(dueCycle < 1) return [];
+  let from = 1;
+  if(isMonthly()){ const m = state.members.find(function(x){return x.id===id;}); if(m) from = firstCycle(m); }
   const list = [];
-  for(let c=1;c<=dueCycle;c++){
+  for(let c=from; c<=dueCycle; c++){
     const rec = (state.payments[id]||{})[c];
     if(!rec || !rec.paid) list.push(c);
   }
@@ -488,6 +669,7 @@ function severity(id){
   return u.length===1 ? 'orange' : 'red';
 }
 function markPaidCycle(id, cycle){
+  if(isMonthly()){ const u = unpaidCycleList(id); if(u.length) cycle = u[0]; }
   if(!cycle || cycle<1) return;
   const draft = state.amountDrafts[id];
   const amount = (draft!==undefined && draft!=='') ? Number(draft) : state.settings.fee;
@@ -614,7 +796,8 @@ function paymentsSummary(){
       if(r && r.paid){
         total += r.amount;
         byGroup[m.group] = (byGroup[m.group]||0) + r.amount;
-        byCycle[cycle] = (byCycle[cycle]||0) + r.amount;
+        const ck = isMonthly() ? (monthKeyOf(m.group, Number(cycle)) || cycle) : cycle;
+        byCycle[ck] = (byCycle[ck]||0) + r.amount;
       }
     });
   });
@@ -702,15 +885,25 @@ async function handleImportFile(fileInput){
   fileInput.value = '';
   render();
 }
+function westernDigits(v){
+  // Arabic-Indic (٠١٢…) and Persian (۰۱۲…) digits -> 0123… so every spreadsheet shows them the same way
+  return String(v==null?'':v).replace(/[٠-٩]/g, function(c){ return '٠١٢٣٤٥٦٧٨٩'.indexOf(c); })
+                             .replace(/[۰-۹]/g, function(c){ return '۰۱۲۳۴۵۶۷۸۹'.indexOf(c); });
+}
+// phone numbers as text: keeps the leading 0 and stops Excel turning 01012345678 into 1.01E+09
+function csvPhone(v){
+  const d = westernDigits(v).replace(/[^\d+]/g, '');
+  return d ? '="'+d+'"' : '-';
+}
 function csvEscape(v){
-  const s = String(v==null?'':v);
+  const s = westernDigits(v);
   return /[",\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 function exportCSV(){
   const rows = [[t('colName'), t('colGroup'), t('colHourSlot'), t('colGrade'), t('phoneLabel'), t('parentPhoneLabel'), t('colExempt'), t('colAttendance'), t('colCycle'), t('colStatus'), t('colPaid')]];
   state.members.forEach(function(m){
     rows.push([
-      m.name, t('groupLabel')[m.group], m.hourSlot || '-', m.grade || '-', m.phone || '-', m.parentPhone || '-',
+      m.name, t('groupLabel')[m.group], m.hourSlot || '-', m.grade || '-', csvPhone(m.phone), csvPhone(m.parentPhone),
       m.exempt ? t('yesLabel') : t('noLabel'),
       attendanceCount(m.id), currentCycle(m.id), memberStatusLabel(m.id), memberTotalPaid(m.id)
     ]);
@@ -943,6 +1136,8 @@ function renderHeader(){
 
 function renderNotices(){
   let html = '';
+  const _p = pauseAt(todayISO());
+  if(_p){ html += '<div class="alert alert-info py-2 small">'+esc(t('pauseBanner')(formatDateAr(shiftDay(_p.to, 1)), _p.label))+'</div>'; }
   if(state.pendingSync){
     html += '<div class="alert alert-danger alert-dismissible py-2 small">'+esc(t('pendingSyncBanner'))+'</div>';
   }
@@ -1014,24 +1209,36 @@ function renderMain(){
     html += '<button class="btn btn-sm btn-dark" onclick="addMember(document.getElementById(\'newNameInput\').value, document.getElementById(\'newPhoneInput\').value, document.getElementById(\'newParentPhoneInput\').value)">+</button></div>';
     html += '<div class="d-flex gap-2"><input type="tel" id="newPhoneInput" placeholder="'+t('phoneLabel')+'" class="form-control form-control-sm">';
     html += '<input type="tel" id="newParentPhoneInput" placeholder="'+t('parentPhoneLabel')+'" onkeydown="if(event.key==\'Enter\') addMember(document.getElementById(\'newNameInput\').value, document.getElementById(\'newPhoneInput\').value, this.value)" class="form-control form-control-sm"></div>';
-    html += '<div class="d-flex flex-wrap gap-2">';
-    GROUPS.forEach(function(g){ html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftGroup===g.id?'active':'')+'" onclick="state.draftGroup=\''+g.id+'\'; state.draftHourSlot=null; render();">'+t('groupLabel')[g.id]+'</button>'; });
-    html += '</div>';
-    const draftSlots = getHourSlots(state.draftGroup);
-    if(draftSlots.length > 0){
-      html += '<div class="d-flex flex-wrap gap-2">';
-      html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(!state.draftHourSlot?'active':'')+'" onclick="state.draftHourSlot=null; render();">'+t('noHourSlot')+'</button>';
-      draftSlots.forEach(function(slot){
-        html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftHourSlot===slot?'active':'')+'" onclick="state.draftHourSlot=\''+esc(slot)+'\'; render();">'+esc(slot)+'</button>';
-      });
-      html += '</div>';
-    }
     const gList = getGrades();
     if(gList.length > 0){
-      html += '<div class="d-flex flex-wrap gap-2">';
-      html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(!state.draftGrade?'active':'')+'" onclick="state.draftGrade=null; render();">'+t('noGrade')+'</button>';
-      gList.forEach(function(g){ html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftGrade===g?'active':'')+'" onclick="state.draftGrade=\''+esc(g)+'\'; render();">'+esc(g)+'</button>'; });
+      html += '<div class="small text-secondary">'+t('chooseGradeFirst')+'</div><div class="d-flex flex-wrap gap-2">';
+      html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(!state.draftGrade?'active':'')+'" onclick="setDraftGrade(null)">'+t('noGrade')+'</button>';
+      gList.forEach(function(g){ html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftGrade===g?'active':'')+'" onclick="setDraftGrade(\''+esc(g)+'\')">'+esc(g)+'</button>'; });
       html += '</div>';
+    }
+    const opts = timeOptionsForGrade(state.draftGrade);
+    if(opts.length > 0 && !state.draftManual){
+      html += '<div class="small text-secondary">'+t('availableTimes')+'</div><div class="d-flex flex-wrap gap-2">';
+      opts.forEach(function(o){
+        html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftGroup===o.group && state.draftHourSlot===o.slot?'active':'')+'" onclick="pickTime(\''+o.group+'\', \''+esc(o.slot)+'\')">'+esc(timeText(o.group, o.slot))+'</button>';
+      });
+      html += '<button class="btn btn-sm btn-link text-secondary" onclick="state.draftManual=true; render();">'+t('otherTime')+'</button></div>';
+      if(state.draftHourSlot && opts.some(function(o){return o.group===state.draftGroup && o.slot===state.draftHourSlot;})){
+        html += '<div class="alert alert-success py-2 small mb-0">'+esc(t('assignedTime')(timeText(state.draftGroup, state.draftHourSlot)))+'</div>';
+      }
+    } else {
+      html += '<div class="d-flex flex-wrap gap-2">';
+      GROUPS.forEach(function(g){ html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftGroup===g.id?'active':'')+'" onclick="state.draftGroup=\''+g.id+'\'; state.draftHourSlot=null; render();">'+t('groupLabel')[g.id]+'</button>'; });
+      html += '</div>';
+      const draftSlots = getHourSlots(state.draftGroup);
+      if(draftSlots.length > 0){
+        html += '<div class="d-flex flex-wrap gap-2">';
+        html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(!state.draftHourSlot?'active':'')+'" onclick="state.draftHourSlot=null; render();">'+t('noHourSlot')+'</button>';
+        draftSlots.forEach(function(slot){
+          html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.draftHourSlot===slot?'active':'')+'" onclick="state.draftHourSlot=\''+esc(slot)+'\'; render();">'+esc(slot)+'</button>';
+        });
+        html += '</div>';
+      }
     }
     html += '</div>';
   }
@@ -1096,7 +1303,7 @@ function renderMain(){
         html += '<button class="btn btn-link text-decoration-none text-body text-start p-0 flex-grow-1 fw-medium" onclick="openDetail(\''+m.id+'\')">&#128100; '+esc(m.name)+'</button>';
         if(exempt){ html += '<span class="badge rounded-pill att-flag exempt">'+t('flagExempt')+'</span>'; }
         else {
-          html += '<span class="badge rounded-pill border fw-normal text-secondary att-progress">'+inCycle+'/'+CYCLE_LENGTH+'</span>';
+          if(!isMonthly()) html += '<span class="badge rounded-pill border fw-normal text-secondary att-progress">'+inCycle+'/'+CYCLE_LENGTH+'</span>';
           if(sev==='orange') html += '<span class="badge rounded-pill att-flag orange">'+t('flagOverdue')+'</span>';
           if(sev==='red') html += '<span class="badge rounded-pill att-flag red">'+t('flagVeryOverdue')+'</span>';
         }
@@ -1112,7 +1319,7 @@ function renderMain(){
         const cycle = currentCycle(m.id);
         const amt = state.payments[m.id][cycle].amount;
         html += '<div class="list-group-item d-flex align-items-center gap-2 px-1 att-row"><span class="seq">'+(i+1)+'</span><button class="btn btn-link text-decoration-none text-body text-start p-0 flex-grow-1 fw-medium" onclick="openDetail(\''+m.id+'\')">'+esc(m.name)+'</button>';
-        html += '<span class="badge rounded-pill border fw-normal text-secondary att-progress">'+t('cycleLabel')+' '+cycle+'</span>';
+        html += '<span class="badge rounded-pill border fw-normal text-secondary att-progress">'+cycleBadge(m.group, cycle)+'</span>';
         html += '<input class="form-control form-control-sm att-amount" type="number" value="'+amt+'" onchange="updatePaidAmount(\''+m.id+'\', '+cycle+', this.value)">';
         html += '<button class="btn btn-sm btn-outline-danger" onclick="markUnpaidCycle(\''+m.id+'\', '+cycle+')">'+t('markUnpaid')+'</button></div>';
       });
@@ -1125,14 +1332,15 @@ function renderMain(){
         const sev = severity(m.id);
         const draft = state.amountDrafts[m.id] != null ? state.amountDrafts[m.id] : '';
         html += '<div class="list-group-item d-flex align-items-center gap-2 px-1 att-row"><span class="seq">'+(i+1)+'</span><button class="btn btn-link text-decoration-none text-body text-start p-0 flex-grow-1 fw-medium" onclick="openDetail(\''+m.id+'\')">'+esc(m.name)+'</button>';
+        if(isMonthly()) html += '<span class="badge rounded-pill border fw-normal text-secondary att-progress">'+esc(cycleName(m.group, unpaidCycleList(m.id)[0]))+'</span>';
         html += '<span class="badge rounded-pill att-flag '+(sev==='red'?'red':'orange')+'">'+(sev==='red'?t('flagVeryOverdue'):t('flagOverdue'))+'</span>';
         html += '<input class="form-control form-control-sm att-amount" type="number" placeholder="'+state.settings.fee+'" value="'+draft+'" oninput="state.amountDrafts[\''+m.id+'\']=this.value">';
         html += '<button class="btn btn-sm btn-outline-success" onclick="markPaidCycle(\''+m.id+'\', '+cycle+')">'+t('markPaid')+'</button></div>';
       });
     }
     if(notDueMembers.length > 0){
-      html += '<div class="small text-secondary py-2">'+t('notDuePrefix')+'<div class="d-flex flex-wrap gap-1 mt-1 att-chips">';
-      html += notDueMembers.map(function(m){return '<span class="badge border fw-normal att-chip">'+esc(m.name)+' · '+cycleCount(m.id)+'/'+CYCLE_LENGTH+'</span>';}).join('');
+      html += '<div class="small text-secondary py-2">'+(isMonthly() ? t('notDuePrefixMonthly') : t('notDuePrefix'))+'<div class="d-flex flex-wrap gap-1 mt-1 att-chips">';
+      html += notDueMembers.map(function(m){return '<span class="badge border fw-normal att-chip">'+esc(m.name)+(isMonthly() ? '' : ' · '+cycleCount(m.id)+'/'+CYCLE_LENGTH)+'</span>';}).join('');
       html += '</div></div>';
     }
     if(exemptMembers.length > 0){
@@ -1204,19 +1412,19 @@ function renderDetail(){
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('collectionSection')+'</h3>';
   if(!exempt && cycle >= 1){
     if(sev){
-      html += '<p class="small text-secondary">'+t('statusOf')(cycle)+' <span class="badge rounded-pill att-flag '+(sev==='red'?'red':'orange')+'">'+(sev==='red'?t('flagVeryOverdue'):t('flagOverdue'))+'</span></p>';
+      html += '<p class="small text-secondary">'+t('statusOf')(cycleName(m.group, cycle))+' <span class="badge rounded-pill att-flag '+(sev==='red'?'red':'orange')+'">'+(sev==='red'?t('flagVeryOverdue'):t('flagOverdue'))+'</span></p>';
       html += '<button class="btn btn-sm btn-outline-success" onclick="markPaidCycle(\''+m.id+'\', '+cycle+')">'+t('markPaid')+'</button>';
     } else {
       html += '<p class="small text-secondary">'+t('currentPaid')+'</p>';
       html += '<button class="btn btn-sm btn-outline-danger" onclick="markUnpaidCycle(\''+m.id+'\', '+cycle+')">'+t('markUnpaid')+'</button>';
     }
   } else if(!exempt){
-    html += '<p class="small text-secondary">'+t('notYetDue')(cycleCount(m.id))+'</p>';
+    html += '<p class="small text-secondary">'+(isMonthly() ? monthlyNotDueText(m) : t('notYetDue')(cycleCount(m.id)))+'</p>';
   } else {
     html += '<p class="small text-secondary">'+t('exemptNotice')+'</p>';
   }
   html += hist.paidCycles.length===0 ? '<p class="small text-secondary">'+t('noPaymentHistory')+'</p>' :
-    '<div class="d-flex flex-wrap gap-1 mt-1 att-chips">'+hist.paidCycles.map(function(e){return '<span class="badge border fw-normal att-chip pay">'+t('cycleLabel')+' '+e[0]+' · '+e[1].amount+' ج.م</span>';}).join('')+'</div>';
+    '<div class="d-flex flex-wrap gap-1 mt-1 att-chips">'+hist.paidCycles.map(function(e){return '<span class="badge border fw-normal att-chip pay">'+cycleBadge(m.group, e[0])+' · '+e[1].amount+' ج.م</span>';}).join('')+'</div>';
   html += '</div>';
 
   if(!exempt){
@@ -1263,7 +1471,41 @@ function renderSettings(){
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('feeTitle')+'</h3><input class="form-control form-control-sm" type="number" value="'+state.settings.fee+'" onchange="saveFeeValue(this.value)">';
   html += '<p class="small text-secondary">'+t('feeHint')+'</p></div>';
 
-  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('cycleModeTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
+  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('payPlanTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
+  [['sessions','planSessions'],['month_start','planMonthStart'],['month_end','planMonthEnd']].forEach(function(p){
+    html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(payPlan()===p[0]?'active':'')+'" onclick="setPayPlan(\''+p[0]+'\')">'+t(p[1])+'</button>';
+  });
+  html += '</div><p class="small text-secondary mt-2 mb-0">'+t('payPlanHint')+'</p></div>';
+
+  const _sy = state.settings.schoolYear || {};
+  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('schoolYearTitle')+'</h3><p class="small text-secondary mb-2">'+t('schoolYearHint')+'</p><div class="d-flex flex-wrap align-items-center gap-2">';
+  html += '<label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.start||'')+'" onchange="setSchoolYear(\'start\', this.value)">';
+  html += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.end||'')+'" onchange="setSchoolYear(\'end\', this.value)"></div></div>';
+
+  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('pauseTitle')+'</h3><p class="small text-secondary mb-2">'+t('pauseHint')+'</p>';
+  const _ps = state.settings.pauses || [];
+  if(_ps.length === 0) html += '<p class="small text-secondary">'+t('pauseNone')+'</p>';
+  _ps.forEach(function(p, i){
+    html += '<div class="d-flex align-items-center gap-2 mb-2 small"><span class="badge border fw-normal att-chip">'+esc(p.label||t('pauseDefault'))+'</span><span dir="ltr">'+esc(p.from)+' → '+esc(p.to)+'</span><button class="btn btn-sm btn-outline-danger" onclick="removePause('+i+')">'+t('pauseRemove')+'</button></div>';
+  });
+  html += '<div class="d-flex flex-wrap align-items-center gap-2"><input id="pauseLabel" class="form-control form-control-sm" style="width:9rem" placeholder="'+t('pauseLabelPh')+'">';
+  html += '<input id="pauseFrom" type="date" class="form-control form-control-sm" style="width:auto"><span class="small text-secondary">→</span><input id="pauseTo" type="date" class="form-control form-control-sm" style="width:auto">';
+  html += '<button class="btn btn-sm btn-dark" onclick="addPause()">'+t('pauseAddBtn')+'</button></div></div>';
+
+  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('termTitle')+'</h3><p class="small text-secondary mb-1">'+t('termHint')+'</p>';
+  GROUPS.forEach(function(g){
+    const tm = getTerm(g.id);
+    html += '<p class="small fw-semibold mb-1 mt-2">'+t('groupLabel')[g.id]+'</p><div class="d-flex flex-wrap align-items-center gap-2">';
+    html += '<label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(tm.start)+'" onchange="setTermDate(\''+g.id+'\',\'start\',this.value)">';
+    html += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(tm.end)+'" onchange="setTermDate(\''+g.id+'\',\'end\',this.value)"></div>';
+    if(isMonthly()){
+      const sch = monthSchedule(g.id);
+      html += '<p class="small text-secondary mb-0">'+(sch.length ? t('termInfo')(sch.length, formatDateAr(sch[0].due)) : t('setStartDate'))+'</p>';
+    }
+  });
+  html += '</div>';
+
+  html += '<div class="mb-3 pb-3 border-bottom"'+(isMonthly()?' hidden':'')+'><h3 class="h6 fw-semibold">'+t('cycleModeTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode!=='group'?'active':'')+'" onclick="state.settings.cycleMode=\'personal\'; persistSettings(); render();">'+t('cycleModePersonal')+'</button>';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode==='group'?'active':'')+'" onclick="state.settings.cycleMode=\'group\'; persistSettings(); render();">'+t('cycleModeGroup')+'</button>';
   html += '</div><p class="small text-secondary">'+t('cycleModeHint')+'</p></div>';
@@ -1278,8 +1520,13 @@ function renderSettings(){
       html += '<span class="badge border fw-normal att-chip">'+esc(slot)+' <span style="cursor:pointer;color:var(--unpaid);font-weight:700" onclick="removeHourSlot(\''+g.id+'\', \''+esc(slot)+'\')">&times;</span></span>';
     });
     html += '</div>';
-    html += '<div class="d-flex gap-2" style="display:flex;gap:6px;margin-top:6px"><input id="hourSlotInput_'+g.id+'" class="form-control form-control-sm" style="margin-top:0" type="text" placeholder="'+t('hourSlotPlaceholder')+'" onkeydown="if(event.key==\'Enter\'){addHourSlot(\''+g.id+'\', this.value);}">';
-    html += '<button class="btn btn-sm btn-outline-dark" onclick="addHourSlot(\''+g.id+'\', document.getElementById(\'hourSlotInput_'+g.id+'\').value)">'+t('addHourSlotBtn')+'</button></div>';
+    html += '<div class="d-flex flex-wrap gap-2" style="margin-top:6px"><input id="hourSlotInput_'+g.id+'" class="form-control form-control-sm" style="margin-top:0;flex:1;min-width:8rem;width:auto" type="text" placeholder="'+t('hourSlotPlaceholder')+'" onkeydown="if(event.key===\'Enter\'){submitHourSlot(\''+g.id+'\');}">';
+    if(getGrades().length > 0){
+      html += '<select id="hourSlotGrade_'+g.id+'" class="form-select form-select-sm" style="width:auto"><option value="">'+t('slotAllGrades')+'</option>';
+      getGrades().forEach(function(gr){ html += '<option value="'+esc(gr)+'">'+esc(gr)+'</option>'; });
+      html += '</select>';
+    }
+    html += '<button class="btn btn-sm btn-outline-dark" onclick="submitHourSlot(\''+g.id+'\')">'+t('addHourSlotBtn')+'</button></div>';
   });
   html += '</div>';
   }
@@ -1313,9 +1560,9 @@ function renderSettings(){
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('summaryTitle')+'</h3><table class="table table-sm mb-0">';
   html += '<tr><td>'+t('summaryTotal')+'</td><td>'+summary.total+' ج.م</td></tr>';
   GROUPS.forEach(function(g){ html += '<tr><td>'+t('groupLabel')[g.id]+'</td><td>'+(summary.byGroup[g.id]||0)+' ج.م</td></tr>'; });
-  const cycles = Object.keys(summary.byCycle).sort(function(a,b){return Number(a)-Number(b);});
+  const cycles = Object.keys(summary.byCycle).sort(function(a,b){ return (isNaN(a)||isNaN(b)) ? (a<b?-1:a>b?1:0) : Number(a)-Number(b); });
   if(cycles.length===0){ html += '<tr><td colspan="2" class="small text-secondary">'+t('summaryNoData')+'</td></tr>'; }
-  else cycles.forEach(function(c){ html += '<tr><td>'+t('summaryCycleRow')(c)+'</td><td>'+summary.byCycle[c]+' ج.م</td></tr>'; });
+  else cycles.forEach(function(c){ html += '<tr><td>'+(isMonthly() ? t('summaryMonthRow')(monthLabel(c) || c) : t('summaryCycleRow')(c))+'</td><td>'+summary.byCycle[c]+' ج.م</td></tr>'; });
   html += '</table></div>';
 
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('importTitle')+'</h3><p class="small text-secondary">'+t('importHint')+'</p>';
