@@ -50,8 +50,8 @@ let state = {
   members: [], attendance: {}, payments: {},
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
-  license: null, licenseMsg: '', licenseOk: false, adminSecret: null,
-  adm: {plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
+  license: null, licenseMsg: '', licenseOk: false, prices: null, adminSecret: null,
+  adm: {prices:{monthly:'',yearly:'',lifetime:''}, plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
   adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, draftManual: false, amountDrafts: {},
@@ -148,6 +148,21 @@ function copyText(s, btn){
     navigator.clipboard.writeText(s).then(function(){ if(btn) btn.textContent = t('payCopied'); }).catch(function(){});
   }
 }
+function priceOf(plan){
+  const sp = state.prices && state.prices[plan];
+  if(sp != null) return sp;
+  return PAY.prices[plan];
+}
+function priceText(plan){
+  const v = priceOf(plan);
+  return v == null ? '' : ' — '+v+(lang()==='en' ? ' EGP' : ' ج.م');
+}
+async function refreshPrices(){
+  try {
+    state.prices = await rpc('get_prices', {});
+    saveLocal('prices', state.prices);
+  } catch(e){ state.prices = state.prices || loadLocal('prices', null); }
+}
 function waLink(){
   return 'https://wa.me/'+PAY.whatsapp+'?text='+encodeURIComponent(t('waText')(state.teacherCode||''));
 }
@@ -226,7 +241,8 @@ async function initLoad(){
   state.teacherCode = loadLocal('teacherCode', null);
   state.role = loadLocal('role', 'teacher');
   state.pendingSync = loadLocal('pendingSync', false);
-  if(state.teacherCode) await refreshLicense();
+  state.prices = loadLocal('prices', null);
+  if(state.teacherCode){ await refreshLicense(); refreshPrices().then(function(){ if(state.ready) render(); }); }
 
   if(state.teacherCode){
     state.members = loadLocal('members', []);
@@ -941,10 +957,25 @@ async function adminRefresh(){
   const r = await adminCall('admin_overview', {p_query: state.adm.query || ''});
   state.adm.stats = r.stats; state.adm.accounts = r.accounts; state.adm.codes = r.codes;
 }
+async function adminLoadPrices(){
+  const pr = await rpc('get_prices', {});
+  ['monthly','yearly','lifetime'].forEach(function(k){ state.adm.prices[k] = (pr && pr[k] != null) ? pr[k] : ''; });
+}
+function adminSavePrices(){
+  adminRun(async function(){
+    const n = function(v){ const x = String(v==null?'':v).trim(); return x === '' ? null : Number(x); };
+    const p = state.adm.prices, vals = [n(p.monthly), n(p.yearly), n(p.lifetime)];
+    if(vals.some(function(v){ return v !== null && (isNaN(v) || v < 0); })) throw new Error(t('adminBadPrice'));
+    state.prices = await adminCall('admin_set_prices', {p_monthly: vals[0], p_yearly: vals[1], p_lifetime: vals[2]});
+    saveLocal('prices', state.prices);
+    await adminLoadPrices();
+    state.adm.msg = t('adminPricesSaved');
+  });
+}
 async function adminLogin(secret){
   secret = (secret||'').trim(); if(!secret) return;
   state.adminSecret = secret;
-  try { await adminRefresh(); state.authError = ''; try{ sessionStorage.setItem('adm', secret); }catch(e){} }
+  try { await adminRefresh(); await adminLoadPrices(); state.authError = ''; try{ sessionStorage.setItem('adm', secret); }catch(e){} }
   catch(e){ state.adminSecret = null; state.authError = e.code === 'forbidden' ? t('adminBad') : t('adminFail'); }
   render();
 }
@@ -955,7 +986,7 @@ function adminLogout(){
 }
 async function adminRun(fn){
   state.adm.msg = '';
-  try { await fn(); } catch(e){ state.adm.msg = e.code === 'forbidden' ? t('adminBad') : (e.code || t('adminFail')); }
+  try { await fn(); } catch(e){ state.adm.msg = e.code === 'forbidden' ? t('adminBad') : (e.code || e.message || t('adminFail')); }
   render();
 }
 function adminSearch(){ adminRun(adminRefresh); }
@@ -1017,6 +1048,13 @@ function renderAdmin(){
   }
   h += '</div>';
 
+  // prices
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminPricesTitle')+'</h3><p class="small text-secondary mb-2">'+t('adminPriceHint')+'</p>';
+  ['monthly','yearly','lifetime'].forEach(function(k){
+    h += '<div class="d-flex align-items-center gap-2 mb-2"><label class="small" style="width:5.5rem">'+t('plan_'+k)+'</label><input class="form-control form-control-sm" style="max-width:9rem" type="number" min="0" step="any" dir="ltr" value="'+esc(a.prices[k])+'" oninput="state.adm.prices.'+k+'=this.value"><span class="small text-secondary">'+(lang()==='en'?'EGP':'ج.م')+'</span></div>';
+  });
+  h += '<button class="btn btn-sm btn-dark" onclick="adminSavePrices()">'+t('adminSavePrices')+'</button></div>';
+
   // accounts
   h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminFindTitle')+'</h3><div class="d-flex gap-2 mb-2">';
   h += '<input class="form-control form-control-sm" dir="ltr" placeholder="'+t('adminQueryPh')+'" value="'+esc(a.query)+'" oninput="state.adm.query=this.value" onkeydown="if(event.key===\'Enter\') adminSearch()">';
@@ -1047,8 +1085,7 @@ function renderPayInfo(){
   let h = '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('payTitle')+'</h3>';
   h += '<ul class="small mb-2">';
   ['monthly','yearly','lifetime'].forEach(function(p){
-    const pr = PAY.prices[p];
-    h += '<li>'+t('plan_'+p)+(pr!=null ? ' — '+pr+' ج.م' : '')+'</li>';
+    h += '<li>'+t('plan_'+p)+priceText(p)+'</li>';
   });
   h += '</ul>';
   [['payCard', PAY.card, true], ['payInstapay', PAY.instapay, false]].forEach(function(r){

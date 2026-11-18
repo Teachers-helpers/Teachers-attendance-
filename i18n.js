@@ -123,7 +123,9 @@ const T = {
     pauseTitle: 'إيقاف المدفوعات (إجازة)', pauseHint: 'أثناء الإيقاف، مثل إجازة الشتاء، لا يستحق أي تحصيل جديد، وما كان سيستحق يتم تحصيله بعد انتهاء الإيقاف.',
     pauseNone: 'لا توجد فترات إيقاف.', pauseDefault: 'إيقاف', pauseRemove: 'حذف', pauseLabelPh: 'مثال: إجازة الشتاء', pauseAddBtn: 'إضافة',
     pauseBad: 'اختر تاريخ بداية ونهاية صحيحين.',
-    pauseBanner: (d, l) => 'المدفوعات متوقفة'+(l ? ' ('+l+')' : '')+' — تعود بتاريخ '+d
+    pauseBanner: (d, l) => 'المدفوعات متوقفة'+(l ? ' ('+l+')' : '')+' — تعود بتاريخ '+d,
+    adminPricesTitle: 'أسعار الاشتراك', adminPriceHint: 'تظهر للمعلمين في طريقة الاشتراك. اترك الخانة فارغة لإخفاء السعر.',
+    adminSavePrices: 'حفظ الأسعار', adminPricesSaved: 'تم حفظ الأسعار ✓', adminBadPrice: 'اكتب رقمًا صحيحًا.'
   },
   en: {
     appTitle: 'Register', add: '+ Add', settings: 'Settings', back: '&#8592; Back',
@@ -239,6 +241,8 @@ const T = {
     pauseTitle: 'Pause payments (break)', pauseHint: 'During a pause, such as winter break, nothing new becomes due; whatever would have been due is collected after the pause ends.',
     pauseNone: 'No pauses set.', pauseDefault: 'Pause', pauseRemove: 'Remove', pauseLabelPh: 'e.g. Winter break', pauseAddBtn: 'Add',
     pauseBad: 'Choose a valid start and end date.',
-    pauseBanner: (d, l) => 'Payments are paused'+(l ? ' ('+l+')' : '')+' — resume on '+d
+    pauseBanner: (d, l) => 'Payments are paused'+(l ? ' ('+l+')' : '')+' — resume on '+d,
+    adminPricesTitle: 'Subscription prices', adminPriceHint: 'Shown to teachers under How to subscribe. Leave a field empty to hide that price.',
+    adminSavePrices: 'Save prices', adminPricesSaved: 'Prices saved ✓', adminBadPrice: 'Enter a valid number.'
   }
 };
