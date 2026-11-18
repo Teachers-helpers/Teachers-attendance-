@@ -565,7 +565,8 @@ function setSchoolYear(which, v){
 // ---- Payment plan: 'sessions' (every 8 attendance days) | 'month_start' | 'month_end' ----
 // Monthly plans: one payment per calendar month, from each class's start date to its end date.
 function payPlan(){ return state.settings.payPlan || 'sessions'; }
-function isMonthly(){ return payPlan() !== 'sessions'; }
+function isMonthly(){ return payPlan().indexOf('month') === 0; }
+function paysAtStart(){ return payPlan() === 'sessions_start'; }   // 8-session cycle: pay on the first day of each cycle
 function isoOf(y, m, d){ return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
 function getTerm(g){ const x = (state.settings.terms||{})[g] || {}; return {start: x.start||'', end: x.end||''}; }
 function setTermDate(g, which, v){
@@ -578,7 +579,8 @@ function setTermDate(g, which, v){
 }
 function setPayPlan(p){
   if(p === payPlan()) return;
-  if(Object.keys(state.payments).length && !confirm(t('payPlanConfirm'))) return;
+  const fam = function(x){ return x.indexOf('month') === 0; };
+  if(Object.keys(state.payments).length && fam(p) !== fam(payPlan()) && !confirm(t('payPlanConfirm'))) return;
   state.settings.payPlan = p;
   persistSettings(); render();
 }
@@ -644,7 +646,7 @@ function monthlyNotDueText(m){
   return e ? t('firstDueOn')(formatDateAr(e.due)) : t('termEnded');
 }
 function currentCycle(id){
-  if(!isMonthly()) return Math.floor(cycleCount(id)/CYCLE_LENGTH);
+  if(!isMonthly()){ const c = cycleCount(id); return paysAtStart() ? Math.ceil(c/CYCLE_LENGTH) : Math.floor(c/CYCLE_LENGTH); }
   const m = state.members.find(function(x){return x.id===id;}); if(!m) return 0;
   const today = todayISO();
   const due = monthSchedule(m.group).filter(function(e){return e.due <= today;}).length;
@@ -1339,7 +1341,7 @@ function renderMain(){
       });
     }
     if(notDueMembers.length > 0){
-      html += '<div class="small text-secondary py-2">'+(isMonthly() ? t('notDuePrefixMonthly') : t('notDuePrefix'))+'<div class="d-flex flex-wrap gap-1 mt-1 att-chips">';
+      html += '<div class="small text-secondary py-2">'+(isMonthly() ? t('notDuePrefixMonthly') : paysAtStart() ? t('notDuePrefixStart') : t('notDuePrefix'))+'<div class="d-flex flex-wrap gap-1 mt-1 att-chips">';
       html += notDueMembers.map(function(m){return '<span class="badge border fw-normal att-chip">'+esc(m.name)+(isMonthly() ? '' : ' · '+cycleCount(m.id)+'/'+CYCLE_LENGTH)+'</span>';}).join('');
       html += '</div></div>';
     }
@@ -1419,7 +1421,7 @@ function renderDetail(){
       html += '<button class="btn btn-sm btn-outline-danger" onclick="markUnpaidCycle(\''+m.id+'\', '+cycle+')">'+t('markUnpaid')+'</button>';
     }
   } else if(!exempt){
-    html += '<p class="small text-secondary">'+(isMonthly() ? monthlyNotDueText(m) : t('notYetDue')(cycleCount(m.id)))+'</p>';
+    html += '<p class="small text-secondary">'+(isMonthly() ? monthlyNotDueText(m) : paysAtStart() ? t('notYetDueStart') : t('notYetDue')(cycleCount(m.id)))+'</p>';
   } else {
     html += '<p class="small text-secondary">'+t('exemptNotice')+'</p>';
   }
@@ -1472,7 +1474,7 @@ function renderSettings(){
   html += '<p class="small text-secondary">'+t('feeHint')+'</p></div>';
 
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('payPlanTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
-  [['sessions','planSessions'],['month_start','planMonthStart'],['month_end','planMonthEnd']].forEach(function(p){
+  [['sessions','planSessions'],['sessions_start','planSessionsStart'],['month_start','planMonthStart'],['month_end','planMonthEnd']].forEach(function(p){
     html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(payPlan()===p[0]?'active':'')+'" onclick="setPayPlan(\''+p[0]+'\')">'+t(p[1])+'</button>';
   });
   html += '</div><p class="small text-secondary mt-2 mb-0">'+t('payPlanHint')+'</p></div>';
