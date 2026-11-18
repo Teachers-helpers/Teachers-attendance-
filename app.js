@@ -50,8 +50,8 @@ let state = {
   members: [], attendance: {}, payments: {},
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
-  license: null, licenseMsg: '', licenseOk: false, prices: null, adminSecret: null,
-  adm: {msgErr:false, prices:{monthly:'',yearly:'',lifetime:''}, plan:'monthly', count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
+  license: null, licenseMsg: '', licenseOk: false, plansInfo: null, adminSecret: null,
+  adm: {msgErr:false, plans:[], year:{start:'',end:'',before:15,after:15}, plan:null, count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
   adding: false, draftGroup: GROUPS[0].id, draftHourSlot: null, draftGrade: null, draftManual: false, amountDrafts: {},
@@ -77,7 +77,7 @@ async function fetchByCode(code){
   return (rows && rows[0] && rows[0].payload) || null;
 }
 async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
-const APP_VERSION = 'v17';
+const APP_VERSION = 'v19';
 // clears the saved copy of the app on this device and reloads, so the newest files are used
 async function forceUpdate(){
   try { const regs = await navigator.serviceWorker.getRegistrations(); for(const r of regs) await r.unregister(); } catch(e){}
@@ -149,7 +149,7 @@ async function redeemCode(raw){
     state.licenseMsg = t('activatedOk'); state.licenseOk = true;
     trySyncPending();
   } catch(e){
-    state.licenseMsg = e.code === 'code_invalid' ? t('codeInvalid') : e.code === 'code_used' ? t('codeUsed') : t('activateFail');
+    state.licenseMsg = e.code === 'code_invalid' ? t('codeInvalid') : e.code === 'code_used' ? t('codeUsed') : e.code === 'year_not_set' ? t('codeYearNotSet') : t('activateFail');
   }
   render();
 }
@@ -158,20 +158,30 @@ function copyText(s, btn){
     navigator.clipboard.writeText(s).then(function(){ if(btn) btn.textContent = t('payCopied'); }).catch(function(){});
   }
 }
-function priceOf(plan){
-  const sp = state.prices && state.prices[plan];
-  if(sp != null) return sp;
-  return PAY.prices[plan];
+function planList(){ return ((state.plansInfo && state.plansInfo.plans) || []).filter(function(p){ return p.kind !== 'lifetime'; }); }   // lifetime is admin-only
+function planName(id, plan){
+  const p = plan || planList().find(function(x){return x.id===id;}) || (state.adm.plans||[]).find(function(x){return x.id===id;});
+  if(!p) return id;
+  return (lang()==='en' ? (p.name_en || p.name_ar) : (p.name_ar || p.name_en)) || id;
 }
-function priceText(plan){
-  const v = priceOf(plan);
-  return v == null ? '' : ' — '+v+(lang()==='en' ? ' EGP' : ' ج.م');
+function planPriceText(p){ return p.price == null ? '' : ' — '+p.price+(lang()==='en' ? ' EGP' : ' ج.م'); }
+function yearWindow(y){
+  y = y || (state.plansInfo && state.plansInfo.year);
+  if(!y || !y.start || !y.end) return null;
+  return {from: shiftDay(y.start, -(y.before==null ? 15 : y.before)), to: shiftDay(y.end, (y.after==null ? 15 : y.after))};
 }
-async function refreshPrices(){
+function planDetail(p){
+  if(p.kind === 'lifetime') return t('planKindLifetime');
+  if(p.kind === 'months') return t('planMonthsN')(p.amount);
+  if(p.kind === 'days') return t('planDaysN')(p.amount);
+  const w = yearWindow();
+  return w ? t('planSchoolYearRange')(w.from, w.to) : t('planSchoolYear');
+}
+async function refreshPlans(){
   try {
-    state.prices = await rpc('get_prices', {});
-    saveLocal('prices', state.prices);
-  } catch(e){ state.prices = state.prices || loadLocal('prices', null); }
+    state.plansInfo = await rpc('get_plans', {});
+    saveLocal('plans', state.plansInfo);
+  } catch(e){ state.plansInfo = state.plansInfo || loadLocal('plans', null); }
 }
 function waLink(){
   return 'https://wa.me/'+PAY.whatsapp+'?text='+encodeURIComponent(t('waText')(state.teacherCode||''));
@@ -251,8 +261,8 @@ async function initLoad(){
   state.teacherCode = loadLocal('teacherCode', null);
   state.role = loadLocal('role', 'teacher');
   state.pendingSync = loadLocal('pendingSync', false);
-  state.prices = loadLocal('prices', null);
-  if(state.teacherCode){ await refreshLicense(); refreshPrices().then(function(){ if(state.ready) render(); }); }
+  state.plansInfo = loadLocal('plans', null);
+  if(state.teacherCode){ await refreshLicense(); refreshPlans().then(function(){ if(state.ready) render(); }); }
 
   if(state.teacherCode){
     state.members = loadLocal('members', []);
@@ -967,25 +977,40 @@ async function adminRefresh(){
   const r = await adminCall('admin_overview', {p_query: state.adm.query || ''});
   state.adm.stats = r.stats; state.adm.accounts = r.accounts; state.adm.codes = r.codes;
 }
-async function adminLoadPrices(){
-  const pr = await rpc('get_prices', {});
-  ['monthly','yearly','lifetime'].forEach(function(k){ state.adm.prices[k] = (pr && pr[k] != null) ? pr[k] : ''; });
+async function adminLoadPlans(){
+  const r = await adminCall('admin_get_plans', {});
+  state.adm.plans = r.plans || [];
+  const y = r.year || {};
+  state.adm.year = {start: y.start || '', end: y.end || '', before: y.before == null ? 15 : y.before, after: y.after == null ? 15 : y.after};
 }
-function adminSavePrices(){
+function adminAddPlan(){
+  state.adm.plans.push({id:'', name_ar:'', name_en:'', kind:'months', amount:1, price:null, active:true, sort: state.adm.plans.length+1});
+  render();
+}
+function adminSavePlan(i){
   adminRun(async function(){
-    const n = function(v){ const x = String(v==null?'':v).trim(); return x === '' ? null : Number(x); };
-    const p = state.adm.prices, vals = [n(p.monthly), n(p.yearly), n(p.lifetime)];
-    if(vals.some(function(v){ return v !== null && (isNaN(v) || v < 0); })) throw new Error(t('adminBadPrice'));
-    state.prices = await adminCall('admin_set_prices', {p_monthly: vals[0], p_yearly: vals[1], p_lifetime: vals[2]});
-    saveLocal('prices', state.prices);
-    await adminLoadPrices();
-    state.adm.msg = t('adminPricesSaved');
+    const p = state.adm.plans[i];
+    const num = function(v){ const x = String(v==null?'':v).trim(); return x === '' ? null : Number(x); };
+    const price = num(p.price), amount = num(p.amount);
+    if((price !== null && (isNaN(price) || price < 0)) || ((p.kind==='months' || p.kind==='days') && (amount===null || isNaN(amount) || amount < 1))) throw new Error(t('adminBadPrice'));
+    await adminCall('admin_save_plan', {p_id: p.id || null, p_name_ar: p.name_ar || '', p_name_en: p.name_en || '', p_kind: p.kind,
+      p_amount: (p.kind==='months' || p.kind==='days') ? Math.round(amount) : null, p_price: price, p_active: !!p.active, p_sort: Number(p.sort)||0});
+    await adminLoadPlans(); await refreshPlans();
+    state.adm.msg = t('adminPlanSaved');
+  });
+}
+function adminSaveYear(){
+  adminRun(async function(){
+    const y = state.adm.year;
+    const r = await adminCall('admin_set_year', {p_start: y.start || null, p_end: y.end || null, p_before: parseInt(y.before,10)||0, p_after: parseInt(y.after,10)||0});
+    await adminLoadPlans(); await refreshPlans();
+    state.adm.msg = t('adminYearSaved');
   });
 }
 async function adminLogin(secret){
   secret = (secret||'').trim(); if(!secret) return;
   state.adminSecret = secret;
-  try { await adminRefresh(); await adminLoadPrices(); state.authError = ''; try{ sessionStorage.setItem('adm', secret); }catch(e){} }
+  try { await adminRefresh(); await adminLoadPlans(); state.authError = ''; try{ sessionStorage.setItem('adm', secret); }catch(e){} }
   catch(e){ state.adminSecret = null; state.authError = e.code === 'forbidden' ? t('adminBad') : t('adminFail'); }
   render();
 }
@@ -1016,7 +1041,7 @@ function adminVoid(code){
   adminRun(async function(){ await adminCall('admin_void_code', {p_code: code}); await adminRefresh(); });
 }
 function adminWaLink(phone, code, plan){
-  return 'https://wa.me/2'+phone+'?text='+encodeURIComponent(t('adminWaMsg')(code, t('plan_'+plan)));
+  return 'https://wa.me/2'+phone+'?text='+encodeURIComponent(t('adminWaMsg')(code, planName(plan)));
 }
 function adminStatusText(st){
   if(!st) return '';
@@ -1039,9 +1064,12 @@ function renderAdmin(){
   h += '</div>';
 
   // generate
+  const act = a.plans.filter(function(p){return p.active;});
+  if(!act.some(function(p){return p.id===a.plan;})) a.plan = act[0] ? act[0].id : null;
   h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminGenTitle')+'</h3><div class="d-flex flex-wrap gap-2 mb-2">';
-  ['monthly','yearly','lifetime'].forEach(function(p){
-    h += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(a.plan===p?'active':'')+'" onclick="state.adm.plan=\''+p+'\'; render();">'+t('plan_'+p)+'</button>';
+  if(!act.length) h += '<span class="small text-secondary">'+t('adminNoPlans')+'</span>';
+  act.forEach(function(p){
+    h += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(a.plan===p.id?'active':'')+'" onclick="state.adm.plan=\''+esc(p.id)+'\'; render();">'+esc(planName(p.id, p))+'</button>';
   });
   h += '</div><div class="d-flex gap-2 mb-2"><input class="form-control form-control-sm" style="width:4.5rem" type="number" min="1" max="50" value="'+esc(a.count)+'" oninput="state.adm.count=this.value" title="'+t('adminCount')+'">';
   h += '<input class="form-control form-control-sm" dir="ltr" placeholder="'+t('adminNotePh')+'" value="'+esc(a.note)+'" oninput="state.adm.note=this.value"></div>';
@@ -1050,7 +1078,7 @@ function renderAdmin(){
     h += '<div class="mt-3">';
     a.result.forEach(function(r){
       h += '<div class="d-flex align-items-center gap-2 mb-2 flex-wrap"><span class="badge border fw-normal att-chip" dir="ltr" style="font-size:.95rem;letter-spacing:1px;padding:6px 10px">'+esc(r.code)+'</span>';
-      h += '<span class="small text-secondary">'+t('plan_'+r.plan)+'</span>';
+      h += '<span class="small text-secondary">'+esc(planName(r.plan))+'</span>';
       h += '<button class="btn btn-sm btn-outline-dark" onclick="copyText(\''+esc(r.code)+'\', this)">'+t('payCopy')+'</button>';
       if(/^01[0125]\d{8}$/.test(a.resultNote||'')) h += '<a class="btn btn-sm btn-outline-success" target="_blank" rel="noopener" href="'+adminWaLink(a.resultNote, r.code, r.plan)+'">'+t('adminSendWa')+'</a>';
       h += '</div>';
@@ -1059,12 +1087,32 @@ function renderAdmin(){
   }
   h += '</div>';
 
-  // prices
-  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminPricesTitle')+'</h3><p class="small text-secondary mb-2">'+t('adminPriceHint')+'</p>';
-  ['monthly','yearly','lifetime'].forEach(function(k){
-    h += '<div class="d-flex align-items-center gap-2 mb-2"><label class="small" style="width:5.5rem">'+t('plan_'+k)+'</label><input class="form-control form-control-sm" style="max-width:9rem" type="number" min="0" step="any" dir="ltr" value="'+esc(a.prices[k])+'" oninput="state.adm.prices.'+k+'=this.value"><span class="small text-secondary">'+(lang()==='en'?'EGP':'ج.م')+'</span></div>';
+  // school year used by the school-year plan
+  const yw = yearWindow({start:a.year.start, end:a.year.end, before:parseInt(a.year.before,10)||0, after:parseInt(a.year.after,10)||0});
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminYearTitle')+'</h3><p class="small text-secondary mb-2">'+t('adminYearHint')+'</p>';
+  h += '<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(a.year.start)+'" onchange="state.adm.year.start=this.value; render();">';
+  h += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(a.year.end)+'" onchange="state.adm.year.end=this.value; render();"></div>';
+  h += '<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><label class="small text-secondary">'+t('adminBefore')+'</label><input type="number" min="0" max="120" class="form-control form-control-sm" style="width:5rem" value="'+esc(a.year.before)+'" oninput="state.adm.year.before=this.value" onchange="render()">';
+  h += '<label class="small text-secondary">'+t('adminAfter')+'</label><input type="number" min="0" max="120" class="form-control form-control-sm" style="width:5rem" value="'+esc(a.year.after)+'" oninput="state.adm.year.after=this.value" onchange="render()"></div>';
+  if(yw) h += '<p class="small fw-semibold mb-2" style="color:var(--paid)" dir="auto">'+esc(t('planSchoolYearRange')(yw.from, yw.to))+'</p>';
+  h += '<button class="btn btn-sm btn-dark" onclick="adminSaveYear()">'+t('adminSaveYear')+'</button></div>';
+
+  // plans
+  h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminPlansTitle')+'</h3><p class="small text-secondary mb-1">'+t('adminPlansHint')+'</p>';
+  a.plans.forEach(function(p, i){
+    h += '<div class="border-top pt-2 mt-2"><div class="d-flex gap-2 mb-2">';
+    h += '<input class="form-control form-control-sm" placeholder="'+t('adminNamePhAr')+'" value="'+esc(p.name_ar||'')+'" oninput="state.adm.plans['+i+'].name_ar=this.value">';
+    h += '<input class="form-control form-control-sm" dir="ltr" placeholder="'+t('adminNamePhEn')+'" value="'+esc(p.name_en||'')+'" oninput="state.adm.plans['+i+'].name_en=this.value"></div>';
+    h += '<div class="d-flex flex-wrap align-items-center gap-2">';
+    h += '<select class="form-select form-select-sm" style="width:auto" onchange="state.adm.plans['+i+'].kind=this.value; render();">';
+    ['months','days','school_year','lifetime'].forEach(function(k){ h += '<option value="'+k+'"'+(p.kind===k?' selected':'')+'>'+t('kind_'+k)+'</option>'; });
+    h += '</select>';
+    if(p.kind==='months' || p.kind==='days') h += '<input type="number" min="1" class="form-control form-control-sm" style="width:4.5rem" dir="ltr" placeholder="'+t('adminAmountPh')+'" value="'+esc(p.amount==null?'':p.amount)+'" oninput="state.adm.plans['+i+'].amount=this.value">';
+    h += '<input type="number" min="0" step="any" class="form-control form-control-sm" style="width:6rem" dir="ltr" placeholder="'+t('adminPricePh')+'" value="'+esc(p.price==null?'':p.price)+'" oninput="state.adm.plans['+i+'].price=this.value"><span class="small text-secondary">'+(lang()==='en'?'EGP':'ج.م')+'</span>';
+    h += '<label class="small d-flex align-items-center gap-1"><input type="checkbox" class="form-check-input mt-0"'+(p.active?' checked':'')+' onchange="state.adm.plans['+i+'].active=this.checked"> '+t('adminActive')+'</label>';
+    h += '<button class="btn btn-sm btn-dark" onclick="adminSavePlan('+i+')">'+t('adminSavePlan')+'</button></div></div>';
   });
-  h += '<button class="btn btn-sm btn-dark" onclick="adminSavePrices()">'+t('adminSavePrices')+'</button></div>';
+  h += '<div class="mt-3"><button class="btn btn-sm btn-outline-dark" onclick="adminAddPlan()">'+t('adminAddPlan')+'</button></div></div>';
 
   // accounts
   h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminFindTitle')+'</h3><div class="d-flex gap-2 mb-2">';
@@ -1085,7 +1133,7 @@ function renderAdmin(){
   h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminUnusedTitle')+'</h3>';
   if(!a.codes.length) h += '<p class="small text-secondary mb-0">–</p>';
   a.codes.forEach(function(c){
-    h += '<div class="d-flex align-items-center gap-2 py-1 border-top small flex-wrap"><span dir="ltr" style="letter-spacing:1px">'+esc(c.code)+'</span><span class="text-secondary">'+t('plan_'+c.plan)+'</span><span class="text-secondary nm" dir="ltr">'+esc(c.note||'')+'</span>';
+    h += '<div class="d-flex align-items-center gap-2 py-1 border-top small flex-wrap"><span dir="ltr" style="letter-spacing:1px">'+esc(c.code)+'</span><span class="text-secondary">'+esc(planName(c.plan))+'</span><span class="text-secondary nm" dir="ltr">'+esc(c.note||'')+'</span>';
     h += '<button class="btn btn-sm btn-outline-dark" onclick="copyText(\''+esc(c.code)+'\', this)">'+t('payCopy')+'</button>';
     h += '<button class="btn btn-sm btn-outline-danger" onclick="adminVoid(\''+esc(c.code)+'\')">'+t('adminVoid')+'</button></div>';
   });
@@ -1095,8 +1143,8 @@ function renderAdmin(){
 function renderPayInfo(){
   let h = '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('payTitle')+'</h3>';
   h += '<ul class="small mb-2">';
-  ['monthly','yearly','lifetime'].forEach(function(p){
-    h += '<li>'+t('plan_'+p)+priceText(p)+'</li>';
+  planList().forEach(function(p){
+    h += '<li><b>'+esc(planName(p.id, p))+'</b>'+planPriceText(p)+'<div class="text-secondary">'+esc(planDetail(p))+'</div></li>';
   });
   h += '</ul>';
   [['payCard', PAY.card, true], ['payInstapay', PAY.instapay, false]].forEach(function(r){
