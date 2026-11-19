@@ -1,4 +1,4 @@
-const I18N_VERSION = 'v22';
+const I18N_VERSION = 'v23';
 function arStudents(n){ return n==0 ? 'لا أحد' : n==1 ? 'طالب واحد' : n==2 ? 'طالبان' : n<=10 ? n+' طلاب' : n+' طالبًا'; }
 // Translations and calendar names (Arabic / English)
 const DAY_NAMES = {

@@ -238,6 +238,10 @@ details > summary { cursor: pointer; font-weight: 600; }
 }
 :root.hc .att-set, :root.hc .att-settabs { border: 2px solid var(--line); box-shadow: none; }
 
+.att-datefield { display: inline-flex; align-items: center; gap: .35rem; }
+.att-dateinput { width: 7.6rem; text-align: center; letter-spacing: .5px; }
+.att-datefield .att-calbtn { padding-inline: .55rem; }
+
 /* ---------- print (PDF export) ---------- */
 #printReport { display: none; }
 #printReport table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; font-size: .85rem; }

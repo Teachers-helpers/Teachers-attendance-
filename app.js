@@ -47,7 +47,37 @@ function shiftDay(iso,delta){
   d.setDate(d.getDate()+delta);
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
-function formatDateAr(iso){ const d=new Date(iso+'T00:00:00'); const L=lang(); return DAY_NAMES[L][d.getDay()]+(L==='ar'?'، ':', ')+d.getDate()+' '+MONTH_NAMES[L][d.getMonth()]; }
+// all dates are shown as dd/mm/yyyy
+function fmtDate(iso){ return (iso && /^\d{4}-\d{2}-\d{2}/.test(iso)) ? iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : ''; }
+function formatDateAr(iso){ const d=new Date(iso+'T00:00:00'); return DAY_NAMES[lang()][d.getDay()]+' '+fmtDate(iso); }
+function dmyToIso(v){
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v||'').trim());
+  if(!m) return '';
+  const d = +m[1], mo = +m[2], y = +m[3], dt = new Date(y, mo-1, d);
+  if(y < 2000 || y > 2100 || dt.getFullYear() !== y || dt.getMonth() !== mo-1 || dt.getDate() !== d) return '';
+  return y+'-'+m[2]+'-'+m[1];
+}
+// typed date field: digits only, slashes added for you, so the year can never get stuck on one digit
+function maskDmy(el){
+  const d = westernDigits(el.value).replace(/\D/g, '').slice(0, 8);
+  el.value = d.length > 4 ? d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4) : d.length > 2 ? d.slice(0,2)+'/'+d.slice(2) : d;
+}
+function readDate(id){ const el = document.getElementById(id); return el ? dmyToIso(el.value) : ''; }
+function dateCommit(id){
+  const el = document.getElementById(id); if(!el) return;
+  const raw = (el.value || '').trim(), iso = dmyToIso(raw);
+  if(raw && !iso){ el.classList.add('is-invalid'); return; }
+  el.classList.remove('is-invalid');
+  const fn = el.getAttribute('data-fn');
+  if(fn && typeof window[fn] === 'function'){ let args = []; try{ args = JSON.parse(el.getAttribute('data-args') || '[]'); }catch(e){} window[fn].apply(null, args.concat([iso])); }
+}
+function dateInput(el){ maskDmy(el); if(el.value.length === 10) dateCommit(el.id); else el.classList.remove('is-invalid'); }
+function datePick(id, iso){ const el = document.getElementById(id); if(!el) return; el.value = fmtDate(iso); dateCommit(id); }
+function dateField(id, iso, fn, args){
+  return '<span class="att-datefield" dir="ltr"><input id="'+id+'" class="form-control form-control-sm att-dateinput" type="text" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="dd/mm/yyyy" value="'+esc(fmtDate(iso))+'" data-fn="'+(fn||'')+'" data-args="'+esc(JSON.stringify(args||[]))+'" oninput="dateInput(this)" onchange="dateCommit(this.id)">'
+    + '<span class="att-caldwrap"><button type="button" class="btn btn-sm btn-outline-dark att-calbtn" tabindex="-1">&#128197;</button><input class="att-realdate" type="date" value="'+esc(iso||'')+'" onchange="datePick(\''+id+'\', this.value)"></span></span>';
+}
+function adminSetYearDate(which, iso){ state.adm.year[which] = iso; render(); }
 function groupDaysLabel(g){ return g.days.map(d=>DAY_NAMES[lang()][d]).join(lang()==='ar'?' و ':' & '); }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -85,7 +115,7 @@ async function fetchByCode(code){
   return (rows && rows[0] && rows[0].payload) || null;
 }
 async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
-const APP_VERSION = 'v22';
+const APP_VERSION = 'v23';
 // clears the saved copy of the app on this device and reloads, so the newest files are used
 async function forceUpdate(){
   try { const regs = await navigator.serviceWorker.getRegistrations(); for(const r of regs) await r.unregister(); } catch(e){}
@@ -183,7 +213,7 @@ function planDetail(p){
   if(p.kind === 'months') return t('planMonthsN')(p.amount);
   if(p.kind === 'days') return t('planDaysN')(p.amount);
   const w = yearWindow();
-  return w ? t('planSchoolYearRange')(w.from, w.to) : t('planSchoolYear');
+  return w ? t('planSchoolYearRange')(fmtDate(w.from), fmtDate(w.to)) : t('planSchoolYear');
 }
 async function refreshPlans(){
   try {
@@ -649,8 +679,8 @@ function termEffective(g){
   return {start: raw.start || sy.start || '', end: raw.end || sy.end || ''};
 }
 function addPause(){
-  const v = function(id){ const e = document.getElementById(id); return e ? e.value : ''; };
-  const from = v('pauseFrom'), to = v('pauseTo'), label = (v('pauseLabel')||'').trim();
+  const lb = document.getElementById('pauseLabel');
+  const from = readDate('pauseFrom'), to = readDate('pauseTo'), label = ((lb && lb.value) || '').trim();
   if(!from || !to || to < from){ alert(t('pauseBad')); return; }
   state.settings.pauses = (state.settings.pauses||[]).concat([{from: from, to: to, label: label}]);
   persistSettings(); render();
@@ -1157,11 +1187,11 @@ function renderAdmin(){
   // school year used by the school-year plan
   const yw = yearWindow({start:a.year.start, end:a.year.end, before:parseInt(a.year.before,10)||0, after:parseInt(a.year.after,10)||0});
   h += '<div class="card card-body p-3 mb-3"><h3 class="h6 fw-semibold">'+t('adminYearTitle')+'</h3><p class="small text-secondary mb-2">'+t('adminYearHint')+'</p>';
-  h += '<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(a.year.start)+'" onchange="state.adm.year.start=this.value; render();">';
-  h += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(a.year.end)+'" onchange="state.adm.year.end=this.value; render();"></div>';
+  h += '<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><label class="small text-secondary">'+t('termStart')+'</label>'+dateField('adm_ys', a.year.start, 'adminSetYearDate', ['start']);
+  h += '<label class="small text-secondary">'+t('termEnd')+'</label>'+dateField('adm_ye', a.year.end, 'adminSetYearDate', ['end'])+'</div>';
   h += '<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><label class="small text-secondary">'+t('adminBefore')+'</label><input type="number" min="0" max="120" class="form-control form-control-sm" style="width:5rem" value="'+esc(a.year.before)+'" oninput="state.adm.year.before=this.value" onchange="render()">';
   h += '<label class="small text-secondary">'+t('adminAfter')+'</label><input type="number" min="0" max="120" class="form-control form-control-sm" style="width:5rem" value="'+esc(a.year.after)+'" oninput="state.adm.year.after=this.value" onchange="render()"></div>';
-  if(yw) h += '<p class="small fw-semibold mb-2" style="color:var(--paid)" dir="auto">'+esc(t('planSchoolYearRange')(yw.from, yw.to))+'</p>';
+  if(yw) h += '<p class="small fw-semibold mb-2" style="color:var(--paid)" dir="auto">'+esc(t('planSchoolYearRange')(fmtDate(yw.from), fmtDate(yw.to)))+'</p>';
   h += '<button class="btn btn-sm btn-dark" onclick="adminSaveYear()">'+t('adminSaveYear')+'</button></div>';
 
   // plans
@@ -1698,18 +1728,18 @@ function renderSettings(){
   const _sy = state.settings.schoolYear || {};
   html += '<!--s|payments|school|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('schoolYearTitle')+'</h3><p class="small text-secondary mb-2">'+t('schoolYearHint')+'</p><div class="d-flex flex-wrap align-items-center gap-2">';
-  html += '<label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.start||'')+'" onchange="setSchoolYear(\'start\', this.value)">';
-  html += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.end||'')+'" onchange="setSchoolYear(\'end\', this.value)"></div></div>';
+  html += '<label class="small text-secondary">'+t('termStart')+'</label>'+dateField('sy_start', _sy.start||'', 'setSchoolYear', ['start']);
+  html += '<label class="small text-secondary">'+t('termEnd')+'</label>'+dateField('sy_end', _sy.end||'', 'setSchoolYear', ['end'])+'</div></div>';
 
   html += '<!--s|payments|pause|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('pauseTitle')+'</h3><p class="small text-secondary mb-2">'+t('pauseHint')+'</p>';
   const _ps = state.settings.pauses || [];
   if(_ps.length === 0) html += '<p class="small text-secondary">'+t('pauseNone')+'</p>';
   _ps.forEach(function(p, i){
-    html += '<div class="d-flex align-items-center gap-2 mb-2 small"><span class="badge border fw-normal att-chip">'+esc(p.label||t('pauseDefault'))+'</span><span dir="ltr">'+esc(p.from)+' → '+esc(p.to)+'</span><button class="btn btn-sm btn-outline-danger" onclick="removePause('+i+')">'+t('pauseRemove')+'</button></div>';
+    html += '<div class="d-flex align-items-center gap-2 mb-2 small"><span class="badge border fw-normal att-chip">'+esc(p.label||t('pauseDefault'))+'</span><span dir="ltr">'+esc(fmtDate(p.from))+' → '+esc(fmtDate(p.to))+'</span><button class="btn btn-sm btn-outline-danger" onclick="removePause('+i+')">'+t('pauseRemove')+'</button></div>';
   });
   html += '<div class="d-flex flex-wrap align-items-center gap-2"><input id="pauseLabel" class="form-control form-control-sm" style="width:9rem" placeholder="'+t('pauseLabelPh')+'">';
-  html += '<input id="pauseFrom" type="date" class="form-control form-control-sm" style="width:auto"><span class="small text-secondary">→</span><input id="pauseTo" type="date" class="form-control form-control-sm" style="width:auto">';
+  html += dateField('pauseFrom', '', '', [])+'<span class="small text-secondary">→</span>'+dateField('pauseTo', '', '', []);
   html += '<button class="btn btn-sm btn-dark" onclick="addPause()">'+t('pauseAddBtn')+'</button></div></div>';
 
   html += '<!--s|payments|flag|-->';
@@ -1717,8 +1747,8 @@ function renderSettings(){
   GROUPS.forEach(function(g){
     const tm = getTerm(g.id);
     html += '<p class="small fw-semibold mb-1 mt-2">'+t('groupLabel')[g.id]+'</p><div class="d-flex flex-wrap align-items-center gap-2">';
-    html += '<label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(tm.start)+'" onchange="setTermDate(\''+g.id+'\',\'start\',this.value)">';
-    html += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(tm.end)+'" onchange="setTermDate(\''+g.id+'\',\'end\',this.value)"></div>';
+    html += '<label class="small text-secondary">'+t('termStart')+'</label>'+dateField('term_'+g.id+'_start', tm.start, 'setTermDate', [g.id,'start']);
+    html += '<label class="small text-secondary">'+t('termEnd')+'</label>'+dateField('term_'+g.id+'_end', tm.end, 'setTermDate', [g.id,'end'])+'</div>';
     if(isMonthly()){
       const sch = monthSchedule(g.id);
       html += '<p class="small text-secondary mb-0">'+(sch.length ? t('termInfo')(sch.length, formatDateAr(sch[0].due)) : t('setStartDate'))+'</p>';
@@ -1750,7 +1780,7 @@ function renderSettings(){
     html += '<button class="btn btn-sm btn-dark" onclick="promoteAll()">'+t('promoteBtn')+'</button>';
   }
   const _bk = loadLocal('promoteBackup', null);
-  if(_bk){ html += '<p class="small text-secondary mt-3 mb-1">'+esc(t('promoteLastAt')(_bk.at))+'</p><button class="btn btn-sm btn-outline-danger" onclick="undoPromotion()">'+t('promoteUndoBtn')+'</button>'; }
+  if(_bk){ html += '<p class="small text-secondary mt-3 mb-1">'+esc(t('promoteLastAt')(fmtDate(_bk.at)))+'</p><button class="btn btn-sm btn-outline-danger" onclick="undoPromotion()">'+t('promoteUndoBtn')+'</button>'; }
   html += '</div>';
 
   html += '<!--s|classes|clock|wide-->';
