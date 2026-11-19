@@ -58,7 +58,7 @@ let state = {
   members: [], attendance: {}, payments: {},
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
-  settingsTab: 'account', license: null, licenseMsg: '', licenseOk: false, plansInfo: null, adminSecret: null,
+  settingsTab: 'account', promoteMsg: '', license: null, licenseMsg: '', licenseOk: false, plansInfo: null, adminSecret: null,
   adm: {msgErr:false, plans:[], year:{start:'',end:'',before:15,after:15}, plan:null, count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
@@ -85,7 +85,7 @@ async function fetchByCode(code){
   return (rows && rows[0] && rows[0].payload) || null;
 }
 async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
-const APP_VERSION = 'v21';
+const APP_VERSION = 'v22';
 // clears the saved copy of the app on this device and reloads, so the newest files are used
 async function forceUpdate(){
   try { const regs = await navigator.serviceWorker.getRegistrations(); for(const r of regs) await r.unregister(); } catch(e){}
@@ -502,6 +502,65 @@ function removeGrade(name){
   if(state.draftGrade===name) state.draftGrade = null;
   GROUPS.forEach(function(g){ const sg = (state.settings.slotGrades||{})[g.id]; if(sg) Object.keys(sg).forEach(function(k){ if(sg[k]===name) delete sg[k]; }); });
   persistSettings(); persistAll();
+  render();
+}
+// ---- Grade order + "promote everyone one grade up" ----
+// The order of the grades list (first -> last) is the teacher's order. Promotion moves every student to the next grade;
+// the first grade ends up empty and the students of the last grade are deleted. A safety copy is kept so it can be undone.
+function moveGrade(name, delta){
+  const list = getGrades().slice(), i = list.indexOf(name), j = i + delta;
+  if(i < 0 || j < 0 || j >= list.length) return;
+  const tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+  state.settings.grades = list;
+  persistSettings(); render();
+}
+function promotionPreview(){
+  const g = getGrades(), counts = {};
+  g.forEach(function(n){ counts[n] = 0; });
+  state.members.forEach(function(m){ if(m.grade && counts[m.grade] !== undefined) counts[m.grade]++; });
+  const leaving = g.length ? counts[g[g.length-1]] : 0;
+  let moving = 0; g.slice(0, -1).forEach(function(n){ moving += counts[n]; });
+  return {counts: counts, moving: moving, leaving: leaving};
+}
+function promoteAll(){
+  const g = getGrades();
+  if(g.length < 2){ alert(t('promoteNeedGrades')); return; }
+  const pv = promotionPreview();
+  if(pv.moving + pv.leaving === 0){ alert(t('promoteNobody')); return; }
+  const last = g[g.length-1];
+  if(!confirm(t('promoteConfirm')(pv.moving, pv.leaving, last, g[0]))) return;
+  saveLocal('promoteBackup', {at: todayISO(), members: state.members, attendance: state.attendance, payments: state.payments});
+  if(!loadLocal('promoteBackup', null)){ alert(t('promoteBackupFail')); return; }
+  const next = {}; g.forEach(function(n, i){ if(i < g.length-1) next[n] = g[i+1]; });
+  const gone = {}; let moved = 0, removed = 0, needTime = 0;
+  const kept = [];
+  state.members.forEach(function(m){
+    if(m.grade === last){ gone[m.id] = true; removed++; return; }
+    if(m.grade && next[m.grade]){
+      const wasTied = m.hourSlot && slotGradeOf(m.group, m.hourSlot);
+      m.grade = next[m.grade]; moved++;
+      if(wasTied){          // their old time belonged to the old grade: use the new grade's time if there is exactly one
+        const opts = timeOptionsForGrade(m.grade);
+        if(opts.length === 1){ m.group = opts[0].group; m.hourSlot = opts[0].slot; } else { m.hourSlot = null; needTime++; }
+      }
+    }
+    kept.push(m);
+  });
+  state.members = kept;
+  Object.keys(gone).forEach(function(id){ delete state.payments[id]; });
+  Object.keys(state.attendance).forEach(function(d){ state.attendance[d] = state.attendance[d].filter(function(id){ return !gone[id]; }); });
+  state.bulkSelected = {}; state.selectedGrade = 'all'; state.selectedMemberId = null;
+  persistAll();
+  state.promoteMsg = t('promoteDone')(moved, removed, needTime);
+  render();
+}
+function undoPromotion(){
+  const b = loadLocal('promoteBackup', null);
+  if(!b || !confirm(t('promoteUndoConfirm'))) return;
+  state.members = b.members; state.attendance = b.attendance; state.payments = b.payments;
+  saveLocal('promoteBackup', null);
+  persistAll();
+  state.promoteMsg = t('promoteUndone');
   render();
 }
 function renameGrade(oldName, newName){
@@ -1672,6 +1731,27 @@ function renderSettings(){
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode!=='group'?'active':'')+'" onclick="state.settings.cycleMode=\'personal\'; persistSettings(); render();">'+t('cycleModePersonal')+'</button>';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode==='group'?'active':'')+'" onclick="state.settings.cycleMode=\'group\'; persistSettings(); render();">'+t('cycleModeGroup')+'</button>';
   html += '</div><p class="small text-secondary">'+t('cycleModeHint')+'</p></div>';
+
+  html += '<!--s|classes|school|wide-->';
+  html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('promoteTitle')+'</h3><p class="small text-secondary mb-2">'+t('promoteHint')+'</p>';
+  if(state.promoteMsg){ html += '<div class="alert alert-success py-2 small">'+esc(state.promoteMsg)+'</div>'; }
+  const _gl = getGrades(), _pv = promotionPreview();
+  if(_gl.length === 0) html += '<p class="small text-secondary">'+t('promoteNoGrades')+'</p>';
+  _gl.forEach(function(gn, i){
+    const flag = i === 0 ? '<span class="badge rounded-pill att-flag exempt">'+t('gradeFirst')+'</span>' : (i === _gl.length-1 ? '<span class="badge rounded-pill att-flag red">'+t('gradeLast')+'</span>' : '');
+    html += '<div class="d-flex align-items-center gap-2 py-1 border-bottom"><span class="seq">'+(i+1)+'</span><span class="nm">'+esc(gn)+' <span class="small text-secondary">('+_pv.counts[gn]+')</span></span>'+flag;
+    html += '<button class="btn btn-sm btn-outline-dark att-check" '+(i===0?'disabled':'')+' onclick="moveGrade(\''+esc(gn)+'\', -1)" aria-label="'+t('gradeMoveUp')+'">↑</button>';
+    html += '<button class="btn btn-sm btn-outline-dark att-check" '+(i===_gl.length-1?'disabled':'')+' onclick="moveGrade(\''+esc(gn)+'\', 1)" aria-label="'+t('gradeMoveDown')+'">↓</button></div>';
+  });
+  html += '<div class="d-flex gap-2 mt-2"><input id="newGradeInput" class="form-control form-control-sm" placeholder="'+t('gradePlaceholder')+'" onkeydown="if(event.key===\'Enter\'){addGrade(this.value);}">';
+  html += '<button class="btn btn-sm btn-outline-dark" onclick="addGrade(document.getElementById(\'newGradeInput\').value)">'+t('addGradeBtn')+'</button></div>';
+  if(_gl.length >= 2){
+    html += '<p class="small text-secondary mt-3 mb-2">'+esc(t('promoteInfo')(_pv.moving, _pv.leaving, _gl[_gl.length-1]))+'</p>';
+    html += '<button class="btn btn-sm btn-dark" onclick="promoteAll()">'+t('promoteBtn')+'</button>';
+  }
+  const _bk = loadLocal('promoteBackup', null);
+  if(_bk){ html += '<p class="small text-secondary mt-3 mb-1">'+esc(t('promoteLastAt')(_bk.at))+'</p><button class="btn btn-sm btn-outline-danger" onclick="undoPromotion()">'+t('promoteUndoBtn')+'</button>'; }
+  html += '</div>';
 
   html += '<!--s|classes|clock|wide-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('hourSlotsTitle')+'</h3>';

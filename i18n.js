@@ -1,4 +1,5 @@
-const I18N_VERSION = 'v21';
+const I18N_VERSION = 'v22';
+function arStudents(n){ return n==0 ? 'لا أحد' : n==1 ? 'طالب واحد' : n==2 ? 'طالبان' : n<=10 ? n+' طلاب' : n+' طالبًا'; }
 // Translations and calendar names (Arabic / English)
 const DAY_NAMES = {
   ar: ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'],
@@ -136,7 +137,16 @@ const T = {
     adminYearTitle: 'العام الدراسي للاشتراك السنوي', adminYearHint: 'الاشتراك السنوي يبدأ قبل بداية الدراسة وينتهي بعد نهايتها بعدد الأيام المحدد.',
     adminBefore: 'أيام قبل البداية', adminAfter: 'أيام بعد النهاية', adminSaveYear: 'حفظ العام الدراسي', adminYearSaved: 'تم حفظ العام الدراسي ✓',
     codeYearNotSet: 'لم يتم تحديد العام الدراسي بعد. تواصل معنا.',
-    tabAccount: 'الحساب', tabSubscription: 'الاشتراك', tabPayments: 'المدفوعات', tabClasses: 'المواعيد', tabData: 'البيانات'
+    tabAccount: 'الحساب', tabSubscription: 'الاشتراك', tabPayments: 'المدفوعات', tabClasses: 'الصفوف', tabData: 'البيانات',
+    promoteTitle: 'ترتيب الصفوف والترقية', promoteHint: 'رتّب الصفوف من الأول إلى الأخير بالأسهم. زر الترقية ينقل كل الطلاب إلى الصف التالي: الصف الأول يصبح فارغًا، وطلاب الصف الأخير يُحذفون.',
+    promoteNoGrades: 'أضف الصفوف الدراسية أولًا (من الأول إلى الأخير).', gradeFirst: 'الأول', gradeLast: 'الأخير', gradeMoveUp: 'أعلى', gradeMoveDown: 'أسفل',
+    promoteInfo: (m, l, last) => 'سينتقل '+arStudents(m)+' للصف التالي، وسيُحذف '+arStudents(l)+' من «'+last+'».',
+    promoteBtn: 'ترقية كل الطلاب صفًا', promoteNeedGrades: 'أضف صفين على الأقل أولًا.', promoteNobody: 'لا يوجد طلاب داخل الصفوف.',
+    promoteConfirm: (m, l, last, first) => 'ترقية كل الطلاب صفًا واحدًا؟\n\n• ينتقل '+arStudents(m)+' للصف التالي\n• يصبح «'+first+'» فارغًا\n• يُحذف '+arStudents(l)+' من «'+last+'»\n\nيمكنك التراجع بعد الترقية من نفس القسم.',
+    promoteDone: (m, r, n) => 'تمت الترقية: انتقل '+arStudents(m)+'، وحُذف '+arStudents(r)+(n ? '، و'+arStudents(n)+' يحتاج موعدًا جديدًا' : '')+'.',
+    promoteBackupFail: 'تعذّر حفظ نسخة احتياطية، لذلك لم تتم الترقية.',
+    promoteUndoBtn: 'تراجع عن آخر ترقية', promoteUndoConfirm: 'استرجاع الطلاب والحضور والمدفوعات كما كانت قبل آخر ترقية؟',
+    promoteUndone: 'تم التراجع عن الترقية.', promoteLastAt: d => 'آخر ترقية بتاريخ '+d
   },
   en: {
     appTitle: 'Register', add: '+ Add', settings: 'Settings', back: '&#8592; Back',
@@ -264,6 +274,15 @@ const T = {
     adminYearTitle: 'School year for the yearly plan', adminYearHint: 'The yearly plan starts before the school year begins and ends after it finishes, by the number of days set here.',
     adminBefore: 'Days before start', adminAfter: 'Days after end', adminSaveYear: 'Save school year', adminYearSaved: 'School year saved ✓',
     codeYearNotSet: 'The school year has not been set yet. Contact us.',
-    tabAccount: 'Account', tabSubscription: 'Subscription', tabPayments: 'Payments', tabClasses: 'Classes', tabData: 'Data'
+    tabAccount: 'Account', tabSubscription: 'Subscription', tabPayments: 'Payments', tabClasses: 'Classes', tabData: 'Data',
+    promoteTitle: 'Grade order & promotion', promoteHint: 'Put the grades in order, first to last, with the arrows. Promote moves every student to the next grade: the first grade becomes empty and the students of the last grade are deleted.',
+    promoteNoGrades: 'Add the grades first (from the first to the last).', gradeFirst: 'First', gradeLast: 'Last', gradeMoveUp: 'Up', gradeMoveDown: 'Down',
+    promoteInfo: (m, l, last) => m+' students will move up, and '+l+' students will be deleted from "'+last+'".',
+    promoteBtn: 'Promote everyone one grade', promoteNeedGrades: 'Add at least two grades first.', promoteNobody: 'There are no students in the grades.',
+    promoteConfirm: (m, l, last, first) => 'Promote every student one grade?\n\n• '+m+' students move to the next grade\n• "'+first+'" becomes empty\n• '+l+' students are deleted from "'+last+'"\n\nYou can undo it afterwards from the same section.',
+    promoteDone: (m, r, n) => 'Promotion done: '+m+' moved up, '+r+' deleted'+(n ? ', '+n+' need a new time' : '')+'.',
+    promoteBackupFail: 'Could not save a safety copy, so nothing was changed.',
+    promoteUndoBtn: 'Undo last promotion', promoteUndoConfirm: 'Restore the students, attendance and payments as they were before the last promotion?',
+    promoteUndone: 'Promotion undone.', promoteLastAt: d => 'Last promotion on '+d
   }
 };
