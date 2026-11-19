@@ -27,7 +27,15 @@ function applyBootstrapDirection(){
 }
 
 function lang(){ return state.settings.lang === 'en' ? 'en' : 'ar'; }
-function t(key){ return T[lang()][key]; }
+function t(key){
+  const v = T[lang()][key];
+  if(v !== undefined) return v;
+  // a key missing from i18n.js (old/mismatched file): show Arabic text or the key itself instead of "undefined"
+  const a = T.ar[key];
+  if(a !== undefined) return a;
+  const f = function(){ return key; }; f.toString = function(){ return key; };
+  return f;
+}
 
 function todayISO(){
   const d = new Date();
@@ -50,7 +58,7 @@ let state = {
   members: [], attendance: {}, payments: {},
   settings: DEFAULT_SETTINGS, ready: false,
   teacherCode: null, authScreen: null, authMode: 'create', joinRole: 'teacher', joinCodeDraft: '', authError: '',
-  license: null, licenseMsg: '', licenseOk: false, plansInfo: null, adminSecret: null,
+  settingsTab: 'account', license: null, licenseMsg: '', licenseOk: false, plansInfo: null, adminSecret: null,
   adm: {msgErr:false, plans:[], year:{start:'',end:'',before:15,after:15}, plan:null, count:1, note:'', query:'', result:[], resultNote:'', accounts:[], codes:[], stats:null, msg:''}, welcomeMsg: '', monthlySummaryMsg: '', dismissedSevere: false,
   screen: 'main', selectedMemberId: null, selectedGroup: GROUPS[0].id, selectedHourSlot: 'all',
   tab: 'attendance', sortDir: 'asc', search: '', selectedDate: todayISO(),
@@ -77,12 +85,12 @@ async function fetchByCode(code){
   return (rows && rows[0] && rows[0].payload) || null;
 }
 async function pushByCode(code, payload){ await rpc('push_data', {p_id: code, p_payload: payload}); }
-const APP_VERSION = 'v19';
+const APP_VERSION = 'v21';
 // clears the saved copy of the app on this device and reloads, so the newest files are used
 async function forceUpdate(){
   try { const regs = await navigator.serviceWorker.getRegistrations(); for(const r of regs) await r.unregister(); } catch(e){}
   try { const keys = await caches.keys(); for(const k of keys) await caches.delete(k); } catch(e){}
-  location.reload();
+  location.replace(location.pathname + '?u=' + Date.now());   // new address = fresh copy of every file
 }
 function versionLine(){
   return '<div class="d-flex align-items-center gap-2 small text-secondary mb-3"><span dir="ltr">'+APP_VERSION+'</span><button class="btn btn-sm btn-outline-dark" onclick="forceUpdate()">'+t('updateApp')+'</button></div>';
@@ -1180,7 +1188,7 @@ function renderLicenseSettings(){
   if(l.state === 'lifetime') line = t('statusLifetime');
   else if(l.state === 'trial') line = t('statusTrial')(d);
   else if(l.state === 'active') line = t('statusActive')(d);
-  let h = '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('subscriptionTitle')+'</h3>';
+  let h = '<!--s|subscription|star|--><div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('subscriptionTitle')+'</h3>';
   if(line) h += '<p class="small fw-semibold" style="color:var(--paid)">'+esc(line)+'</p>';
   if(l.state !== 'lifetime'){ h += renderActivation() + '<details class="small"><summary class="mb-2">'+t('payTitle')+'</summary>'+renderPayInfo()+'</details>'; }
   return h + '</div>';
@@ -1234,6 +1242,7 @@ function renderHeader(){
 
 function renderNotices(){
   let html = '';
+  if(!VERSIONS_MATCH){ html += '<div class="alert alert-danger py-2 small" dir="ltr">Files are out of sync ('+APP_VERSION+'). Upload index.html, app.js, i18n.js, style.css and sw.js together, then press Update app in Settings.</div>'; }
   const _p = pauseAt(todayISO());
   if(_p){ html += '<div class="alert alert-info py-2 small">'+esc(t('pauseBanner')(formatDateAr(shiftDay(_p.to, 1)), _p.label))+'</div>'; }
   if(state.pendingSync){
@@ -1241,7 +1250,7 @@ function renderNotices(){
   }
   const _d = licenseDaysLeft();
   if(state.license && (state.license.state==='trial' || state.license.state==='active') && _d!==null && _d<=7){
-    html += '<div class="alert alert-danger py-2 small d-flex justify-content-between align-items-center gap-2"><span>'+esc(t('expiringBanner')(_d))+'</span><button class="btn btn-sm btn-outline-danger" onclick="state.screen=\'settings\'; render();">'+t('renewBtn')+'</button></div>';
+    html += '<div class="alert alert-danger py-2 small d-flex justify-content-between align-items-center gap-2"><span>'+esc(t('expiringBanner')(_d))+'</span><button class="btn btn-sm btn-outline-danger" onclick="state.settingsTab=\'subscription\'; state.screen=\'settings\'; render();">'+t('renewBtn')+'</button></div>';
   }
   if(state.welcomeMsg){
     html += '<div class="alert alert-success alert-dismissible py-2 small"><button class="btn-close" onclick="state.welcomeMsg=\'\'; render();"></button>'+esc(state.welcomeMsg)+'</div>';
@@ -1539,11 +1548,59 @@ function renderDetail(){
   return html;
 }
 
+// ---- Settings screen: tabs + icon cards ----
+const SET_ICONS = {
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  text:'<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+  eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  star:'<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.2 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3z"/>',
+  coin:'<circle cx="12" cy="12" r="9"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6v2M12 16v2"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  school:'<path d="M3 10l9-5 9 5-9 5-9-5z"/><path d="M7 12v5c0 1 2.2 2 5 2s5-1 5-2v-5"/>',
+  pause:'<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  cycle:'<path d="M20 11a8 8 0 00-14-4M4 13a8 8 0 0014 4M4 4v4h4M20 20v-4h-4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  move:'<path d="M5 12h14M13 6l6 6-6 6"/>',
+  chart:'<path d="M5 20V10M12 20V4M19 20v-8"/>',
+  up:'<path d="M12 20V8M7 13l5-5 5 5M5 4h14"/>',
+  down:'<path d="M12 4v12M7 11l5 5 5-5M5 20h14"/>',
+  warn:'<path d="M12 3l10 18H2L12 3zM12 10v5M12 18v.5"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/>'
+};
+function setIcon(k){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(SET_ICONS[k]||SET_ICONS.info)+'</svg>'; }
+const SET_TABS = [['account','user','tabAccount'],['subscription','star','tabSubscription'],['payments','coin','tabPayments'],['classes','clock','tabClasses'],['data','down','tabData']];
+function settingsView(raw){
+  const parts = raw.split('<!--s|');
+  const head = parts.shift();
+  const secs = parts.map(function(p){
+    const i = p.indexOf('-->'), meta = p.slice(0, i).split('|');
+    let h = p.slice(i+3);
+    h = h.replace(/^<div class="mb-3 pb-3( border-bottom)?"( hidden)?>/, '<div class="att-set'+(meta[1]==='warn' ? ' att-danger' : '')+(meta[2]==='wide' ? ' wide' : '')+'"$2>');
+    h = h.replace('<h3 class="h6 fw-semibold">', '<h3 class="att-set-title"><span class="att-ico">'+setIcon(meta[1])+'</span><span>');
+    h = h.replace(/(<span>[^<]*)<\/h3>/, '$1</span></h3>');
+    return {cat: meta[0], html: h};
+  });
+  const tabs = SET_TABS.filter(function(tb){ return secs.some(function(x){ return x.cat === tb[0]; }); });
+  let cur = state.settingsTab;
+  if(!tabs.some(function(tb){ return tb[0] === cur; })) cur = tabs[0][0];
+  let h = head + '<div class="att-settabs" role="tablist">';
+  tabs.forEach(function(tb){
+    h += '<button class="att-settab'+(tb[0]===cur?' active':'')+'" role="tab" onclick="state.settingsTab=\''+tb[0]+'\'; render();">'+setIcon(tb[1])+'<span>'+t(tb[2])+'</span></button>';
+  });
+  h += '</div><div class="att-setgrid">';
+  secs.forEach(function(x){ if(x.cat === cur) h += x.html; });
+  h += '</div>';
+  if(cur === 'account') h += versionLine();
+  return h;
+}
 function renderSettings(){
   const summary = paymentsSummary();
-  let html = '<button class="btn btn-sm btn-outline-dark mb-3" onclick="state.screen=\'main\'; render();">'+t('back')+'</button>';
-  html += '<h2 class="h4 fw-bold mb-3">'+t('settingsTitle')+'</h2>';
+  let html = '<div class="att-set-head"><button class="btn btn-sm btn-outline-dark" onclick="state.screen=\'main\'; render();">'+t('back')+'</button><h2>'+t('settingsTitle')+'</h2></div>';
 
+  html += '<!--s|account|user|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('accountTitle')+'</h3><p class="small text-secondary">'+t('teacherCodeLabel')+'</p>';
   html += '<div class="d-flex flex-wrap gap-2"><span class="badge border fw-normal att-chip" style="font-size:1rem;letter-spacing:2px;padding:6px 14px">'+esc(state.teacherCode||'')+'</span>';
   if(!isTeacher()){ html += '<span class="badge rounded-pill att-flag orange">'+t('assistantBadge')+'</span>'; }
@@ -1554,21 +1611,25 @@ function renderSettings(){
   html += renderLicenseSettings();
 
   if(isTeacher()){
+  html += '<!--s|account|lock|-->';
     html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('teacherPasswordTitle')+'</h3><p class="small text-secondary">'+t('teacherPasswordHint')+'</p>';
     html += '<input id="teacherPasswordInput" class="form-control form-control-sm" type="password" placeholder="'+t('password')+'" value="">';
     html += '<button class="btn btn-sm btn-outline-dark" style="margin-top:6px" onclick="saveTeacherPassword(document.getElementById(\'teacherPasswordInput\').value)">'+t('changePasswordBtn')+'</button>';
     html += '</div>';
   }
 
+  html += '<!--s|account|globe|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('languageTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(lang()==='ar'?'active':'')+'" onclick="setLang(\'ar\')">العربية</button>';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(lang()==='en'?'active':'')+'" onclick="setLang(\'en\')">English</button>';
   html += '</div></div>';
 
   if(isTeacher()){
+  html += '<!--s|payments|coin|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('feeTitle')+'</h3><input class="form-control form-control-sm" type="number" value="'+state.settings.fee+'" onchange="saveFeeValue(this.value)">';
   html += '<p class="small text-secondary">'+t('feeHint')+'</p></div>';
 
+  html += '<!--s|payments|cal|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('payPlanTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
   [['sessions','planSessions'],['sessions_start','planSessionsStart'],['month_start','planMonthStart'],['month_end','planMonthEnd']].forEach(function(p){
     html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(payPlan()===p[0]?'active':'')+'" onclick="setPayPlan(\''+p[0]+'\')">'+t(p[1])+'</button>';
@@ -1576,10 +1637,12 @@ function renderSettings(){
   html += '</div><p class="small text-secondary mt-2 mb-0">'+t('payPlanHint')+'</p></div>';
 
   const _sy = state.settings.schoolYear || {};
+  html += '<!--s|payments|school|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('schoolYearTitle')+'</h3><p class="small text-secondary mb-2">'+t('schoolYearHint')+'</p><div class="d-flex flex-wrap align-items-center gap-2">';
   html += '<label class="small text-secondary">'+t('termStart')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.start||'')+'" onchange="setSchoolYear(\'start\', this.value)">';
   html += '<label class="small text-secondary">'+t('termEnd')+'</label><input type="date" class="form-control form-control-sm" style="width:auto" value="'+esc(_sy.end||'')+'" onchange="setSchoolYear(\'end\', this.value)"></div></div>';
 
+  html += '<!--s|payments|pause|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('pauseTitle')+'</h3><p class="small text-secondary mb-2">'+t('pauseHint')+'</p>';
   const _ps = state.settings.pauses || [];
   if(_ps.length === 0) html += '<p class="small text-secondary">'+t('pauseNone')+'</p>';
@@ -1590,6 +1653,7 @@ function renderSettings(){
   html += '<input id="pauseFrom" type="date" class="form-control form-control-sm" style="width:auto"><span class="small text-secondary">→</span><input id="pauseTo" type="date" class="form-control form-control-sm" style="width:auto">';
   html += '<button class="btn btn-sm btn-dark" onclick="addPause()">'+t('pauseAddBtn')+'</button></div></div>';
 
+  html += '<!--s|payments|flag|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('termTitle')+'</h3><p class="small text-secondary mb-1">'+t('termHint')+'</p>';
   GROUPS.forEach(function(g){
     const tm = getTerm(g.id);
@@ -1603,11 +1667,13 @@ function renderSettings(){
   });
   html += '</div>';
 
+  html += '<!--s|payments|cycle|-->';
   html += '<div class="mb-3 pb-3 border-bottom"'+(isMonthly()?' hidden':'')+'><h3 class="h6 fw-semibold">'+t('cycleModeTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode!=='group'?'active':'')+'" onclick="state.settings.cycleMode=\'personal\'; persistSettings(); render();">'+t('cycleModePersonal')+'</button>';
   html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.cycleMode==='group'?'active':'')+'" onclick="state.settings.cycleMode=\'group\'; persistSettings(); render();">'+t('cycleModeGroup')+'</button>';
   html += '</div><p class="small text-secondary">'+t('cycleModeHint')+'</p></div>';
 
+  html += '<!--s|classes|clock|wide-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('hourSlotsTitle')+'</h3>';
   GROUPS.forEach(function(g){
     const slots = getHourSlots(g.id);
@@ -1629,15 +1695,18 @@ function renderSettings(){
   html += '</div>';
   }
 
+  html += '<!--s|account|text|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('fontSizeTitle')+'</h3><div class="d-flex flex-wrap gap-2">';
   [['small',t('small')],['medium',t('medium')],['large',t('large')]].forEach(function(pair){
     html += '<button class="btn btn-sm rounded-pill btn-outline-dark '+(state.settings.fontSize===pair[0]?'active':'')+'" onclick="setFontSize(\''+pair[0]+'\')">'+pair[1]+'</button>';
   });
   html += '</div></div>';
 
+  html += '<!--s|account|eye|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><label class="d-flex align-items-center gap-2 small"><input class="form-check-input mt-0" type="checkbox" '+(state.settings.highContrast?'checked':'')+' onchange="setHighContrast(this.checked)"> '+t('highContrastLabel')+'</label></div>';
 
   if(isTeacher()){
+  html += '<!--s|classes|user|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('exemptListTitle')+'</h3><div class="border rounded p-1 att-settingslist">';
   if(state.members.length===0){ html += '<p class="small text-secondary">'+t('noMembersYet')+'</p>'; }
   else state.members.forEach(function(m){
@@ -1645,6 +1714,7 @@ function renderSettings(){
   });
   html += '</div></div>';
 
+  html += '<!--s|classes|move|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('bulkMoveTitle')+'</h3><div class="border rounded p-1 att-settingslist">';
   if(state.members.length===0){ html += '<p class="small text-secondary">'+t('noMembersYet')+'</p>'; }
   else state.members.forEach(function(m){
@@ -1655,6 +1725,7 @@ function renderSettings(){
   html += '</div><button class="btn btn-sm btn-dark" style="margin-top:8px" onclick="bulkMove()">'+t('bulkMoveBtn')+'</button></div>';
   }
 
+  html += '<!--s|payments|chart|wide-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('summaryTitle')+'</h3><table class="table table-sm mb-0">';
   html += '<tr><td>'+t('summaryTotal')+'</td><td>'+summary.total+' ج.م</td></tr>';
   GROUPS.forEach(function(g){ html += '<tr><td>'+t('groupLabel')[g.id]+'</td><td>'+(summary.byGroup[g.id]||0)+' ج.م</td></tr>'; });
@@ -1663,6 +1734,7 @@ function renderSettings(){
   else cycles.forEach(function(c){ html += '<tr><td>'+(isMonthly() ? t('summaryMonthRow')(monthLabel(c) || c) : t('summaryCycleRow')(c))+'</td><td>'+summary.byCycle[c]+' ج.م</td></tr>'; });
   html += '</table></div>';
 
+  html += '<!--s|data|up|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('importTitle')+'</h3><p class="small text-secondary">'+t('importHint')+'</p>';
   html += '<input id="importFileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleImportFile(this)">';
   html += '<div class="d-flex flex-wrap gap-2"><button class="btn btn-sm btn-outline-dark" onclick="document.getElementById(\'importFileInput\').click()">'+t('importBtn')+'</button>';
@@ -1670,19 +1742,21 @@ function renderSettings(){
   if(state.importStatus){ html += '<p class="small text-secondary mt-1">'+esc(state.importStatus)+'</p>'; }
   html += '</div>';
 
+  html += '<!--s|data|down|-->';
   html += '<div class="mb-3 pb-3 border-bottom"><h3 class="h6 fw-semibold">'+t('exportTitle')+'</h3><p class="small text-secondary">'+t('exportHint')+'</p>';
   html += '<div class="d-flex flex-wrap gap-2"><button class="btn btn-sm btn-outline-dark" onclick="exportCSV()">'+t('exportCsvBtn')+'</button>';
   html += '<button class="btn btn-sm btn-outline-dark" onclick="exportPDF()">'+t('exportPdfBtn')+'</button></div></div>';
 
   if(isTeacher()){
+  html += '<!--s|data|warn|-->';
   html += '<div class="mb-3 pb-3"><h3 class="h6 fw-semibold">'+t('deleteAllTitle')+'</h3><p class="small text-secondary">'+t('deleteAllHint')+'</p>';
   html += '<button class="btn btn-sm btn-outline-danger" onclick="deleteEverything()">'+t('deleteAllBtn')+'</button></div>';
   } else {
+  html += '<!--s|account|info|-->';
   html += '<div class="mb-3 pb-3"><p class="small text-secondary">'+t('teacherOnlyNote')+'</p></div>';
   }
 
-  html += versionLine();
-  return html;
+  return settingsView(html);
 }
 
 function render(){
@@ -1703,5 +1777,12 @@ if('serviceWorker' in navigator){
   });
 }
 
+// every file must come from the same release; if i18n.js is an old copy, refresh once automatically
+const VERSIONS_MATCH = (typeof I18N_VERSION !== 'undefined' && I18N_VERSION === APP_VERSION);
+try {
+  if(location.search.indexOf('u=') >= 0) history.replaceState(null, '', location.pathname);
+  if(VERSIONS_MATCH) sessionStorage.removeItem('vfix');
+  else if(!sessionStorage.getItem('vfix')){ sessionStorage.setItem('vfix', '1'); forceUpdate(); }
+} catch(e){}
 try{ const _adm = sessionStorage.getItem('adm'); if(_adm) adminLogin(_adm); }catch(e){}
 initLoad();

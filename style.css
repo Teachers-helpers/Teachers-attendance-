@@ -206,6 +206,38 @@ details > summary { cursor: pointer; font-weight: 600; }
 @media (hover: hover) { .btn-outline-dark:not(.active):hover { border-color: var(--ink); } }
 @media (prefers-reduced-motion: reduce) { .btn, .att-row { transition: none; } .btn:active { transform: none; } }
 
+
+/* ---------- settings: tabs + icon cards ---------- */
+.att-set-head { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+.att-set-head h2 { margin: 0; font-size: 1.35rem; font-weight: 700; }
+.att-settabs {
+  display: flex; gap: .3rem; overflow-x: auto; padding: .3rem; margin-bottom: 1rem; scrollbar-width: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+}
+.att-settabs::-webkit-scrollbar { display: none; }
+.att-settab {
+  flex: 1 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: .45rem; white-space: nowrap;
+  border: 0; background: transparent; color: var(--ink-soft); font: inherit; font-weight: 600; font-size: .88rem;
+  padding: .55rem .9rem; border-radius: 10px; cursor: pointer; transition: background-color .15s, color .15s;
+}
+.att-settab svg { width: 18px; height: 18px; flex: none; }
+.att-settab:hover:not(.active) { background: var(--bg); color: var(--ink); }
+.att-settab.active { background: var(--ink); color: var(--surface); }
+.att-setgrid { display: grid; gap: .9rem; }
+.att-set { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.1rem; box-shadow: var(--shadow); }
+.att-set-title { display: flex; align-items: center; gap: .65rem; margin: 0 0 .75rem; font-size: 1rem; font-weight: 700; }
+.att-ico { display: inline-flex; flex: none; width: 2.1rem; height: 2.1rem; align-items: center; justify-content: center; border-radius: 10px; background: var(--bg); color: var(--ink); }
+.att-ico svg { width: 18px; height: 18px; }
+.att-set p.small:last-child { margin-bottom: 0; }
+.att-set .att-set { border: 0; box-shadow: none; padding: 0; }
+.att-set.att-danger { border-color: var(--unpaid); }
+.att-set.att-danger .att-ico { background: var(--unpaid-bg); color: var(--unpaid); }
+@media (min-width: 992px) {
+  .att-setgrid { grid-template-columns: 1fr 1fr; align-items: start; }
+  .att-set.wide { grid-column: 1 / -1; }
+}
+:root.hc .att-set, :root.hc .att-settabs { border: 2px solid var(--line); box-shadow: none; }
+
 /* ---------- print (PDF export) ---------- */
 #printReport { display: none; }
 #printReport table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; font-size: .85rem; }

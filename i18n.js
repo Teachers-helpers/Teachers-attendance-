@@ -1,3 +1,4 @@
+const I18N_VERSION = 'v21';
 // Translations and calendar names (Arabic / English)
 const DAY_NAMES = {
   ar: ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'],
@@ -134,7 +135,8 @@ const T = {
     adminAmountPh: 'العدد', adminPricePh: 'السعر', adminPlanSaved: 'تم حفظ الخطة ✓', adminNoPlans: 'لا توجد خطط مفعّلة.',
     adminYearTitle: 'العام الدراسي للاشتراك السنوي', adminYearHint: 'الاشتراك السنوي يبدأ قبل بداية الدراسة وينتهي بعد نهايتها بعدد الأيام المحدد.',
     adminBefore: 'أيام قبل البداية', adminAfter: 'أيام بعد النهاية', adminSaveYear: 'حفظ العام الدراسي', adminYearSaved: 'تم حفظ العام الدراسي ✓',
-    codeYearNotSet: 'لم يتم تحديد العام الدراسي بعد. تواصل معنا.'
+    codeYearNotSet: 'لم يتم تحديد العام الدراسي بعد. تواصل معنا.',
+    tabAccount: 'الحساب', tabSubscription: 'الاشتراك', tabPayments: 'المدفوعات', tabClasses: 'المواعيد', tabData: 'البيانات'
   },
   en: {
     appTitle: 'Register', add: '+ Add', settings: 'Settings', back: '&#8592; Back',
@@ -261,6 +263,7 @@ const T = {
     adminAmountPh: 'Count', adminPricePh: 'Price', adminPlanSaved: 'Plan saved ✓', adminNoPlans: 'No active plans.',
     adminYearTitle: 'School year for the yearly plan', adminYearHint: 'The yearly plan starts before the school year begins and ends after it finishes, by the number of days set here.',
     adminBefore: 'Days before start', adminAfter: 'Days after end', adminSaveYear: 'Save school year', adminYearSaved: 'School year saved ✓',
-    codeYearNotSet: 'The school year has not been set yet. Contact us.'
+    codeYearNotSet: 'The school year has not been set yet. Contact us.',
+    tabAccount: 'Account', tabSubscription: 'Subscription', tabPayments: 'Payments', tabClasses: 'Classes', tabData: 'Data'
   }
 };
